@@ -656,51 +656,114 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
-static inline int32_t clamp500(int32_t x) {
-  if (x < -500) return -500;
-  if (x >  500) return  500;
-  return x;
-}
+static inline int32_t clamp500(int32_t x){ return x<-500?-500:(x>500?500:x); }
 
-/* Pre-allocate fixed-size MultiArray with external storage */
+/* Fixed-size 4-element Int32MultiArray bound to external storage */
 static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing)
 {
   std_msgs__msg__Int32MultiArray__init(m);
-  m->layout.dim.data = NULL;
-  m->layout.dim.size = 0;
-  m->layout.dim.capacity = 0;
+  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
   m->layout.data_offset = 0;
-  m->data.data = backing;
-  m->data.size = 4;
-  m->data.capacity = 4;
+  m->data.data = backing; m->data.size = 4; m->data.capacity = 4;
 }
 
-/* Subscriber callback: clamp & store */
+typedef struct {
+  TIM_HandleTypeDef* htim_pwm;
+  uint32_t           ch_pwm;
+  GPIO_TypeDef*      port_ina;  uint16_t pin_ina;
+  GPIO_TypeDef*      port_inb;  uint16_t pin_inb;
+  GPIO_TypeDef*      port_vdd;  uint16_t pin_vdd;
+  TIM_HandleTypeDef* htim_enc;
+  int16_t            last_raw;
+  int32_t            accum;
+} motor_t;
+
+/* Map FL: PWM TIM2_CH1, direction GPIOs, VDD, Encoder TIM1 */
+static motor_t M_FL = {
+  .htim_pwm = &htim2, .ch_pwm = TIM_CHANNEL_1,
+  .port_ina = GPIOC,  .pin_ina = FL_INA_GPO_Pin,
+  .port_inb = GPIOC,  .pin_inb = FL_INB_GPO_Pin,
+  .port_vdd = GPIOC,  .pin_vdd = FL_VDD_GPO_Pin,
+  .htim_enc = &htim1,
+  .last_raw = 0, .accum = 0
+};
+
+static void motor_enable(motor_t* m)
+{
+  /* power/enable pin */
+  HAL_GPIO_WritePin(m->port_vdd, m->pin_vdd, GPIO_PIN_SET);
+
+  /* start PWM channel and set 0% duty */
+  HAL_TIM_PWM_Start(m->htim_pwm, m->ch_pwm);
+  __HAL_TIM_SET_COMPARE(m->htim_pwm, m->ch_pwm, 0);
+}
+
+static void motor_set_speed(motor_t* m, int32_t v/*-500..500*/)
+{
+  v = clamp500(v);
+  /* set direction */
+  if (v >= 0) {
+    HAL_GPIO_WritePin(m->port_ina, m->pin_ina, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(m->port_inb, m->pin_inb, GPIO_PIN_RESET);
+  } else {
+    HAL_GPIO_WritePin(m->port_ina, m->pin_ina, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(m->port_inb, m->pin_inb, GPIO_PIN_SET);
+    v = -v;
+  }
+  /* scale to ARR (TIM2 configured ARR=4199 -> 20 kHz PWM) */
+  uint32_t arr  = __HAL_TIM_GET_AUTORELOAD(m->htim_pwm);
+  uint32_t duty = (uint32_t)((v * (int32_t)arr) / 500);
+  if (duty > arr) duty = arr;
+  __HAL_TIM_SET_COMPARE(m->htim_pwm, m->ch_pwm, duty);
+}
+
+static void encoder_start(motor_t* m)
+{
+  __HAL_TIM_SET_COUNTER(m->htim_enc, 0);
+  HAL_TIM_Encoder_Start(m->htim_enc, TIM_CHANNEL_ALL);
+  m->last_raw = 0;
+  m->accum    = 0;
+}
+
+/* Read encoder with wrap-safe accumulation to 32-bit */
+static int32_t encoder_sample_accum(motor_t* m)
+{
+  uint16_t raw = __HAL_TIM_GET_COUNTER(m->htim_enc);
+  int16_t delta = (int16_t)((int32_t)raw - (int32_t)(uint16_t)m->last_raw);
+  m->last_raw = (int16_t)raw;
+  m->accum += delta;              /* delta can be negative; handles wrap */
+  return m->accum;
+}
+
 static void wheel_cmd_cb(const void * msgin)
 {
   const std_msgs__msg__Int32MultiArray* in = (const std_msgs__msg__Int32MultiArray*)msgin;
   int n = (in->data.size >= 4) ? 4 : (int)in->data.size;
+
   for (int i = 0; i < 4; ++i) {
     int32_t v = (i < n) ? in->data.data[i] : 0;
     v = clamp500(v);
     last_cmd[i] = v;
-    cmd_data[i] = v;  // for echo
+    cmd_data[i] = v;              /* for /wheel_status/cmd_echo */
   }
+
+  /* drive only the first motor for now */
+  motor_set_speed(&M_FL, last_cmd[0]);
 }
 
-/* Timer callback: publish echo + (test) encoders */
+/* Timer @100 Hz: publish echo + encoder accum */
 static void timer_cb(rcl_timer_t * t, int64_t last_call_time)
 {
   (void)t; (void)last_call_time;
 
-  /* echo latest command */
-  (void)rcl_publish(&pub_cmd_echo, &msg_cmd_echo, NULL);
+  /* encoder position (ticks since boot) for FL at index 0 */
+  enc_data[0] = encoder_sample_accum(&M_FL);
+  enc_data[1] = 0; enc_data[2] = 0; enc_data[3] = 0;
 
-  /* test encoders: integrate command */
-  static int32_t acc[4] = {0,0,0,0};
-  for (int i=0;i<4;++i) { acc[i] += last_cmd[i]; enc_data[i] = acc[i]; }
+  (void)rcl_publish(&pub_cmd_echo, &msg_cmd_echo, NULL);
   (void)rcl_publish(&pub_encoders, &msg_enc, NULL);
 }
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -726,13 +789,13 @@ void StartDefaultTask(void *argument)
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   */
  
-	/* transport */
+	/* -------- transport -------- */
 	  rmw_uros_set_custom_transport(
 	      true, (void *)&huart2,
 	      cubemx_transport_open, cubemx_transport_close,
 	      cubemx_transport_write, cubemx_transport_read);
 
-	  /* allocators */
+	  /* -------- allocators -------- */
 	  rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
 	  freeRTOS_allocator.allocate      = microros_allocate;
 	  freeRTOS_allocator.deallocate    = microros_deallocate;
@@ -740,13 +803,17 @@ void StartDefaultTask(void *argument)
 	  freeRTOS_allocator.zero_allocate = microros_zero_allocate;
 	  (void)rcutils_set_default_allocator(&freeRTOS_allocator);
 
-	  /* wait for agent (~5 s) */
+	  /* -------- wait for agent (~5 s) -------- */
 	  for (int i = 0; i < 50; ++i) {
 	    if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) break;
 	    osDelay(100);
 	  }
 
-	  /* graph */
+	  /* -------- start peripherals for FL motor -------- */
+	  motor_enable(&M_FL);      /* PWM + enable pin */
+	  encoder_start(&M_FL);     /* TIM1 encoder */
+
+	  /* -------- micro-ROS graph -------- */
 	  rclc_support_t support;
 	  rcl_allocator_t allocator = rcl_get_default_allocator();
 	  CHECK(rclc_support_init(&support, 0, NULL, &allocator));
@@ -754,12 +821,10 @@ void StartDefaultTask(void *argument)
 	  rcl_node_t node;
 	  CHECK(rclc_node_init_default(&node, "nucleo_f446re", "", &support));
 
-	  /* prepare fixed-size messages */
 	  init_multiarray_4(&msg_cmd_echo, cmd_data);
 	  init_multiarray_4(&msg_enc,      enc_data);
 	  init_multiarray_4(&msg_cmd_rx,   rx_data);
 
-	  /* publishers */
 	  CHECK(rclc_publisher_init_default(
 	      &pub_cmd_echo, &node,
 	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
@@ -770,22 +835,19 @@ void StartDefaultTask(void *argument)
 	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
 	      "wheel_status/encoders"));
 
-	  /* subscriber */
 	  CHECK(rclc_subscription_init_default(
 	      &sub_cmd, &node,
 	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
 	      "wheel_cmd"));
 
-	  /* 100 Hz timer (new API needs autostart flag) */
+	  /* 100 Hz timer (new API with autostart) */
 	  CHECK(rclc_timer_init_default2(&timer, &support, RCL_MS_TO_NS(10), timer_cb, true));
 
-	  /* executor (1 sub + 1 timer) */
 	  CHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
 	  CHECK(rclc_executor_add_subscription(&executor, &sub_cmd, &msg_cmd_rx, &wheel_cmd_cb, ON_NEW_DATA));
 	  CHECK(rclc_executor_add_timer(&executor, &timer));
 
-	  /* spin */
-	  for(;;) {
+	  for (;;) {
 	    (void)rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
 	  }
   /* USER CODE END 5 */
