@@ -11,28 +11,48 @@
             },
             "group": {
                 "kind": "build",
-                "isDefault": true
+                "isDefault": false     // remove default
             },
-            "problemMatcher": "$gcc"
+            "problemMatcher": "$gcc",
+            "detail": "Build the STM32 firmware from the Debug folder"
         },
         {
-            "label": "Flash STM32 (ST-LINK)",
+            "label": "Clean STM32 (Debug)",
             "type": "shell",
-            "command": "C:/Program Files/STMicroelectronics/STM32Cube/STM32CubeProgrammer/bin/STM32_Programmer_CLI.exe",
-            "args": [
-                "-c", "port=SWD",
-                "-d", "${workspaceFolder}/Debug/NexusRobot_ROS2_Slave.elf",
-                "-rst"
-            ],
+            "command": "make",
+            "args": ["clean"],
+            "options": {
+                "cwd": "${workspaceFolder}/Debug"
+            },
+            "group": "build",
             "problemMatcher": []
         },
         {
+            "label": "Flash STM32 (SWD)",
+            "type": "shell",
+            "command": "STM32_Programmer_CLI",
+            "args": [
+                "-c", "port=swd",
+                "-d", "${workspaceFolder}/Debug/NexusRobot_ROS2_Slave.elf",
+                "-hardRst", "-rst", "--start"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": [],
+            "detail": "Flash the ELF to the STM32 board using ST-LINK"
+        },
+        {
             "label": "Build + Flash",
+            "dependsOrder": "sequence",
             "dependsOn": [
                 "Build STM32 (Debug)",
-                "Flash STM32 (ST-LINK)"
+                "Flash STM32 (SWD)"
             ],
-            "dependsOrder": "sequence"
+            "group": {
+                "kind": "build",
+                "isDefault": true     // 👈 now this is default
+            }
         }
     ]
 }

@@ -22,6 +22,18 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <rcl/rcl.h>
+#include <rcl/error_handling.h>
+#include <rclc/rclc.h>
+#include <rclc/executor.h>
+
+#include <uxr/client/transport.h>
+
+#include <rmw_microxrcedds_c/config.h>
+#include <rmw_microros/rmw_microros.h>
+
+#include <std_msgs/msg/int32_multi_array.h>
+#include <std_msgs/msg/int32.h>
 
 /* USER CODE END Includes */
 
@@ -37,6 +49,18 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+/* Guard macro so it’s not defined twice */
+#ifdef CHECK
+#undef CHECK
+#endif
+#define CHECK(expr) do {                                      \
+  rcl_ret_t _rc = (expr);                                     \
+  if (_rc != RCL_RET_OK) {                                    \
+    /* blink or trap so you can see which call failed */      \
+    while (1) { HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5); osDelay(200); } \
+  }                                                           \
+} while (0)
+
 
 /* USER CODE END PM */
 
@@ -59,7 +83,21 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
+/* ---------- micro-ROS entities ---------- */
+static rcl_publisher_t pub_cmd_echo, pub_encoders;
+static rcl_subscription_t sub_cmd;
+static rcl_timer_t timer;
+static rclc_executor_t executor;
 
+/* Messages & backing storage */
+static std_msgs__msg__Int32MultiArray msg_cmd_echo;   // TX echo
+static std_msgs__msg__Int32MultiArray msg_enc;        // TX encoders
+static std_msgs__msg__Int32MultiArray msg_cmd_rx;     // RX command
+
+static int32_t cmd_data[4] = {0,0,0,0};
+static int32_t enc_data[4] = {0,0,0,0};
+static int32_t rx_data[4]  = {0,0,0,0};
+static volatile int32_t last_cmd[4] = {0,0,0,0};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -75,6 +113,20 @@ static void MX_TIM2_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
+bool cubemx_transport_open(struct uxrCustomTransport * transport);
+bool cubemx_transport_close(struct uxrCustomTransport * transport);
+size_t cubemx_transport_write(struct uxrCustomTransport* transport, const uint8_t * buf, size_t len, uint8_t * err);
+size_t cubemx_transport_read(struct uxrCustomTransport* transport, uint8_t* buf, size_t len, int timeout, uint8_t* err);
+
+void * microros_allocate(size_t size, void * state);
+void microros_deallocate(void * pointer, void * state);
+void * microros_reallocate(void * pointer, size_t size, void * state);
+void * microros_zero_allocate(size_t number_of_elements, size_t size_of_element, void * state);
+
+static inline int32_t clamp500(int32_t x);
+static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing);
+static void wheel_cmd_cb(const void * msgin);
+static void timer_cb(rcl_timer_t * t, int64_t last_call_time);
 
 /* USER CODE END PFP */
 
@@ -345,16 +397,13 @@ static void MX_TIM2_Init(void)
   */
 static void MX_TIM3_Init(void)
 {
-
   /* USER CODE BEGIN TIM3_Init 0 */
-
   /* USER CODE END TIM3_Init 0 */
 
   TIM_Encoder_InitTypeDef sConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM3_Init 1 */
-
   /* USER CODE END TIM3_Init 1 */
   htim3.Instance = TIM3;
   htim3.Init.Prescaler = 0;
@@ -382,9 +431,7 @@ static void MX_TIM3_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM3_Init 2 */
-
   /* USER CODE END TIM3_Init 2 */
-
 }
 
 /**
@@ -394,16 +441,13 @@ static void MX_TIM3_Init(void)
   */
 static void MX_TIM4_Init(void)
 {
-
   /* USER CODE BEGIN TIM4_Init 0 */
-
   /* USER CODE END TIM4_Init 0 */
 
   TIM_Encoder_InitTypeDef sConfig = {0};
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM4_Init 1 */
-
   /* USER CODE END TIM4_Init 1 */
   htim4.Instance = TIM4;
   htim4.Init.Prescaler = 0;
@@ -431,9 +475,7 @@ static void MX_TIM4_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM4_Init 2 */
-
   /* USER CODE END TIM4_Init 2 */
-
 }
 
 /**
@@ -614,6 +656,51 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+static inline int32_t clamp500(int32_t x) {
+  if (x < -500) return -500;
+  if (x >  500) return  500;
+  return x;
+}
+
+/* Pre-allocate fixed-size MultiArray with external storage */
+static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing)
+{
+  std_msgs__msg__Int32MultiArray__init(m);
+  m->layout.dim.data = NULL;
+  m->layout.dim.size = 0;
+  m->layout.dim.capacity = 0;
+  m->layout.data_offset = 0;
+  m->data.data = backing;
+  m->data.size = 4;
+  m->data.capacity = 4;
+}
+
+/* Subscriber callback: clamp & store */
+static void wheel_cmd_cb(const void * msgin)
+{
+  const std_msgs__msg__Int32MultiArray* in = (const std_msgs__msg__Int32MultiArray*)msgin;
+  int n = (in->data.size >= 4) ? 4 : (int)in->data.size;
+  for (int i = 0; i < 4; ++i) {
+    int32_t v = (i < n) ? in->data.data[i] : 0;
+    v = clamp500(v);
+    last_cmd[i] = v;
+    cmd_data[i] = v;  // for echo
+  }
+}
+
+/* Timer callback: publish echo + (test) encoders */
+static void timer_cb(rcl_timer_t * t, int64_t last_call_time)
+{
+  (void)t; (void)last_call_time;
+
+  /* echo latest command */
+  (void)rcl_publish(&pub_cmd_echo, &msg_cmd_echo, NULL);
+
+  /* test encoders: integrate command */
+  static int32_t acc[4] = {0,0,0,0};
+  for (int i=0;i<4;++i) { acc[i] += last_cmd[i]; enc_data[i] = acc[i]; }
+  (void)rcl_publish(&pub_encoders, &msg_enc, NULL);
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -626,6 +713,7 @@ static void MX_GPIO_Init(void)
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
+  /*
 	HAL_GPIO_WritePin(GPIOB, RL_VDD_GPO_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(GPIOB, FL_INB_GPO_Pin, GPIO_PIN_RESET);
 	HAL_GPIO_WritePin(GPIOB, FL_INA_GPO_Pin, GPIO_PIN_SET);
@@ -636,12 +724,70 @@ void StartDefaultTask(void *argument)
 
 	// start PWM on CH1 (do this once)
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
+  */
+ 
+	/* transport */
+	  rmw_uros_set_custom_transport(
+	      true, (void *)&huart2,
+	      cubemx_transport_open, cubemx_transport_close,
+	      cubemx_transport_write, cubemx_transport_read);
 
-  /* Infinite loop */
-  for(;;)
-  {
-    osDelay(1);
-  }
+	  /* allocators */
+	  rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
+	  freeRTOS_allocator.allocate      = microros_allocate;
+	  freeRTOS_allocator.deallocate    = microros_deallocate;
+	  freeRTOS_allocator.reallocate    = microros_reallocate;
+	  freeRTOS_allocator.zero_allocate = microros_zero_allocate;
+	  (void)rcutils_set_default_allocator(&freeRTOS_allocator);
+
+	  /* wait for agent (~5 s) */
+	  for (int i = 0; i < 50; ++i) {
+	    if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) break;
+	    osDelay(100);
+	  }
+
+	  /* graph */
+	  rclc_support_t support;
+	  rcl_allocator_t allocator = rcl_get_default_allocator();
+	  CHECK(rclc_support_init(&support, 0, NULL, &allocator));
+
+	  rcl_node_t node;
+	  CHECK(rclc_node_init_default(&node, "nucleo_f446re", "", &support));
+
+	  /* prepare fixed-size messages */
+	  init_multiarray_4(&msg_cmd_echo, cmd_data);
+	  init_multiarray_4(&msg_enc,      enc_data);
+	  init_multiarray_4(&msg_cmd_rx,   rx_data);
+
+	  /* publishers */
+	  CHECK(rclc_publisher_init_default(
+	      &pub_cmd_echo, &node,
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+	      "wheel_status/cmd_echo"));
+
+	  CHECK(rclc_publisher_init_default(
+	      &pub_encoders, &node,
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+	      "wheel_status/encoders"));
+
+	  /* subscriber */
+	  CHECK(rclc_subscription_init_default(
+	      &sub_cmd, &node,
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+	      "wheel_cmd"));
+
+	  /* 100 Hz timer (new API needs autostart flag) */
+	  CHECK(rclc_timer_init_default2(&timer, &support, RCL_MS_TO_NS(10), timer_cb, true));
+
+	  /* executor (1 sub + 1 timer) */
+	  CHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
+	  CHECK(rclc_executor_add_subscription(&executor, &sub_cmd, &msg_cmd_rx, &wheel_cmd_cb, ON_NEW_DATA));
+	  CHECK(rclc_executor_add_timer(&executor, &timer));
+
+	  /* spin */
+	  for(;;) {
+	    (void)rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
+	  }
   /* USER CODE END 5 */
 }
 
