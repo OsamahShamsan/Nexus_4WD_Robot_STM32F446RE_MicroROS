@@ -397,6 +397,7 @@ static void MX_TIM2_Init(void)
   */
 static void MX_TIM3_Init(void)
 {
+
   /* USER CODE BEGIN TIM3_Init 0 */
   /* USER CODE END TIM3_Init 0 */
 
@@ -432,6 +433,7 @@ static void MX_TIM3_Init(void)
   }
   /* USER CODE BEGIN TIM3_Init 2 */
   /* USER CODE END TIM3_Init 2 */
+
 }
 
 /**
@@ -441,6 +443,7 @@ static void MX_TIM3_Init(void)
   */
 static void MX_TIM4_Init(void)
 {
+
   /* USER CODE BEGIN TIM4_Init 0 */
   /* USER CODE END TIM4_Init 0 */
 
@@ -476,6 +479,7 @@ static void MX_TIM4_Init(void)
   }
   /* USER CODE BEGIN TIM4_Init 2 */
   /* USER CODE END TIM4_Init 2 */
+
 }
 
 /**
@@ -602,15 +606,15 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOH, RL_INB_GPO_Pin|RL_INA_GPO_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, FL_INA_GPO_Pin|FL_INB_GPO_Pin|LR_INA_GPO_Pin|LR_INB_GPO_Pin
-                          |RR_INB_GPO_Pin|RL_VDD_GPO_Pin|FL_VDD_GPO_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, FL_INA_GPO_Pin|FL_INB_GPO_Pin|RR_INA_GPO_Pin|RR_INB_GPO_Pin
+                          |RR_INB_GPOC4_Pin|RL_VDD_GPO_Pin|FL_VDD_GPO_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, UR_INA_GPO_Pin|FR_INA_GPO_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOA, FR_INA_GPO_Pin|FR_INA_GPOA10_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, UR_INB_GPO_Pin|RR_INA_GPO_Pin|UL_INA_GPO_Pin|UL_INB_GPO_Pin
-                          |FR_INB_GPO_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, FR_INB_GPO_Pin|RR_INA_GPOB13_Pin|FL_INA_GPOB14_Pin|FL_INB_GPOB15_Pin
+                          |FR_INB_GPOB5_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, RR_VDD_GPO_Pin|FR_VDD_GPO_Pin, GPIO_PIN_SET);
@@ -622,28 +626,28 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOH, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : FL_INA_GPO_Pin FL_INB_GPO_Pin LR_INA_GPO_Pin LR_INB_GPO_Pin
-                           RR_INB_GPO_Pin RR_VDD_GPO_Pin FR_VDD_GPO_Pin RL_VDD_GPO_Pin
+  /*Configure GPIO pins : FL_INA_GPO_Pin FL_INB_GPO_Pin RR_INA_GPO_Pin RR_INB_GPO_Pin
+                           RR_INB_GPOC4_Pin RR_VDD_GPO_Pin FR_VDD_GPO_Pin RL_VDD_GPO_Pin
                            FL_VDD_GPO_Pin */
-  GPIO_InitStruct.Pin = FL_INA_GPO_Pin|FL_INB_GPO_Pin|LR_INA_GPO_Pin|LR_INB_GPO_Pin
-                          |RR_INB_GPO_Pin|RR_VDD_GPO_Pin|FR_VDD_GPO_Pin|RL_VDD_GPO_Pin
+  GPIO_InitStruct.Pin = FL_INA_GPO_Pin|FL_INB_GPO_Pin|RR_INA_GPO_Pin|RR_INB_GPO_Pin
+                          |RR_INB_GPOC4_Pin|RR_VDD_GPO_Pin|FR_VDD_GPO_Pin|RL_VDD_GPO_Pin
                           |FL_VDD_GPO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : UR_INA_GPO_Pin FR_INA_GPO_Pin */
-  GPIO_InitStruct.Pin = UR_INA_GPO_Pin|FR_INA_GPO_Pin;
+  /*Configure GPIO pins : FR_INA_GPO_Pin FR_INA_GPOA10_Pin */
+  GPIO_InitStruct.Pin = FR_INA_GPO_Pin|FR_INA_GPOA10_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : UR_INB_GPO_Pin RR_INA_GPO_Pin UL_INA_GPO_Pin UL_INB_GPO_Pin
-                           FR_INB_GPO_Pin */
-  GPIO_InitStruct.Pin = UR_INB_GPO_Pin|RR_INA_GPO_Pin|UL_INA_GPO_Pin|UL_INB_GPO_Pin
-                          |FR_INB_GPO_Pin;
+  /*Configure GPIO pins : FR_INB_GPO_Pin RR_INA_GPOB13_Pin FL_INA_GPOB14_Pin FL_INB_GPOB15_Pin
+                           FR_INB_GPOB5_Pin */
+  GPIO_InitStruct.Pin = FR_INB_GPO_Pin|RR_INA_GPOB13_Pin|FL_INA_GPOB14_Pin|FL_INB_GPOB15_Pin
+                          |FR_INB_GPOB5_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
