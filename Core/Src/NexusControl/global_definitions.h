@@ -222,7 +222,7 @@ PID Controller Equation (speed control)
 
 
 // No-Load Values
-#define RECOMMENDED_VALUES				1
+#define RECOMMENDED_VALUES				0
 
 #if RECOMMENDED_VALUES == 1
 // Motor limits
@@ -273,8 +273,8 @@ PID Controller Equation (speed control)
 #endif
 
 
-#define V_RAMPING_STEPS   				5.0f     			// Δv per cycle [mm/s]
-#define WZ_RAMPING_STEPS   				0.07f     			// Δw per cycle [rad/s]
+#define V_RAMPING_STEPS   				20.0f     			// Δv per cycle [mm/s]
+#define WZ_RAMPING_STEPS   				0.1f     			// Δw per cycle [rad/s]
 
 // ----------------------------------------------------------------------------------
 // ----------- PID gains and Control loop -------------------------------------------

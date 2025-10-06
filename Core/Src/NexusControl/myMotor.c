@@ -2,17 +2,19 @@
 #include "global_definitions.h"
 #include "math.h"
 
+
 extern TIM_HandleTypeDef htim2;
 
-// PWM limits
-int16_t max_Speed = 500;
-int16_t min_Speed = -500;
-float max_omega = 1.0f;
-float min_omega = -1.0f;
 
+volatile float g_v_step_mmps   = 20.0f;  // start conservative
+volatile float g_wz_step_radps = 0.10f;
+volatile int32_t g_ccr_applied[4] = {0, 0, 0, 0};
 
-const int16_t linear_ramp_step = 20;
-const float angular_ramp_step = 0.1;
+void ctrlparams_set_steps(float v_step_mmps, float wz_step_radps)
+{
+    if (v_step_mmps  > 0.0f) g_v_step_mmps   = v_step_mmps;
+    if (wz_step_radps > 0.0f) g_wz_step_radps = wz_step_radps;
+}
 
 static inline float clamp(float v, float lo, float hi);
 static inline float ramp_step(float current, float target, float step);
@@ -70,22 +72,6 @@ void init_car(void){
 	HAL_GPIO_WritePin(FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, GPIO_PIN_RESET);
 	HAL_GPIO_WritePin(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin, GPIO_PIN_SET);
 
-/*
-    // Set the direction to Backward (INA = 0) & (INB = 1)
-	// Front Left
-	HAL_GPIO_WritePin(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, GPIO_PIN_SET);
-	// Rear Right
-	HAL_GPIO_WritePin(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, GPIO_PIN_SET);
-	// Front Right
-	HAL_GPIO_WritePin(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, GPIO_PIN_SET);
-	// Rear Left
-	HAL_GPIO_WritePin(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, GPIO_PIN_SET);
-*/
-
 	// Enable the full bridges of the motor drivers (VDD)
 	HAL_GPIO_WritePin(RL_VDD_GPO_GPIO_Port, RL_VDD_GPO_Pin, GPIO_PIN_SET);
 	HAL_GPIO_WritePin(FR_VDD_GPO_GPIO_Port, FR_VDD_GPO_Pin, GPIO_PIN_SET);
@@ -103,19 +89,6 @@ void init_car(void){
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);	// FL Motor
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0);	// FR Motor
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);	// RR Motor
-	/*
-	for(int i = 0; i <= 500; i++){
-			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, i);	// FL Motor
-			__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, i);	// RR Motor
-			HAL_Delay(10);
-	}
-
-	for(int i = 0; i <= 100; i++){
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i);	// RL Motor
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);	// FR Motor
-		HAL_Delay(10);
-	}
-	*/
 
 }
 
@@ -125,9 +98,9 @@ void Mecanum_Control(float vx_target, float vy_target, float w_target) {
 	static float vx = 0, vy = 0, wz = 0;
 
 	// Increment current velocities to the targets using fixed steps (prevent rapid changes for motor safety)
-	vx = ramp_step(vx_target, vx, V_RAMPING_STEPS);
-	vy = ramp_step(vy_target, vy, V_RAMPING_STEPS);
-	wz = ramp_step(w_target,  wz, WZ_RAMPING_STEPS);
+	vx = ramp_step(vx_target, vx, g_v_step_mmps);
+	vy = ramp_step(vy_target, vy, g_v_step_mmps);
+	wz = ramp_step(w_target,  wz, g_wz_step_radps);
 
 
 	float V[4];
@@ -171,6 +144,7 @@ void Mecanum_Control(float vx_target, float vy_target, float w_target) {
 
 	for (int i = 0; i < 4; i++){
         __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNELS[i], CCR[i]);
+        g_ccr_applied[i] = CCR[i];
 	}
 }
 

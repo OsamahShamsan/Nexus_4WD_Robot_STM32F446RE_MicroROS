@@ -4,6 +4,14 @@
 #include "main.h"
 
 
+// Defaults; can be changed at runtime (per control tick, i.e., every 10 ms)
+extern volatile float g_v_step_mmps;     // mm/s per tick
+extern volatile float g_wz_step_radps;   // rad/s per tick
+extern volatile int32_t g_ccr_applied[4];
+
+void ctrlparams_set_steps(float v_step_mmps, float wz_step_radps);
+
+
 void init_car(void);
 void Mecanum_Control(float vx_target, float vy_target, float w_target);
 void Emergency_Stop(void);

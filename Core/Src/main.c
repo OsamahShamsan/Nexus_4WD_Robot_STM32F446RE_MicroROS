@@ -35,6 +35,7 @@
 
 #include <std_msgs/msg/int32_multi_array.h>
 #include <std_msgs/msg/int32.h>
+#include "std_msgs/msg/float32_multi_array.h"
 
 // ----------------- Nexus Part -----------------
 #include "global_definitions.h"
@@ -54,19 +55,37 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-/* Guard macro so it’s not defined twice */
+// (try/except) or assert return codes
+/*
 #ifdef CHECK
 #undef CHECK
 #endif
 #define CHECK(expr) do {                                      \
   rcl_ret_t _rc = (expr);                                     \
   if (_rc != RCL_RET_OK) {                                    \
-    /* blink or trap so you can see which call failed */      \
+    // blink or trap so you can see which call failed       \
     while (1) { HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5); osDelay(200); } \
   }                                                           \
 } while (0)
+*/
 
+/*
+ QoS and reliability
 
+rclc_publisher_init_default / rclc_subscription_init_default use the default QoS (reliable, keep last depth 10).
+
+On flaky links (Wi-Fi/Serial) you might choose best-effort. You can:
+
+use rclc’s best-effort helpers if available (e.g., rclc_publisher_init_best_effort), or
+
+set options manually:
+
+rcl_publisher_options_t opts = rcl_publisher_get_default_options();
+opts.qos = rmw_qos_profile_sensor_data;  // best-effort
+rcl_publisher_init(&pub_encoders, &node,
+  ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+  "wheel_status/encoders", &opts);
+ */
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
@@ -77,6 +96,7 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim6;
 TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart5;
@@ -95,21 +115,62 @@ const osThreadAttr_t defaultTask_attributes = {
 };
 /* USER CODE BEGIN PV */
 // ----------------- micro-ROS entities -----------------
+static rclc_executor_t executor;
+static rcl_timer_t timer;
+
+/*
 static rcl_publisher_t pub_cmd_echo, pub_encoders;
 static rcl_subscription_t sub_cmd;
-static rcl_timer_t timer;
-static rclc_executor_t executor;
 
-// Messages & backing storage */
+//ROS 2 Python analogy: node.create_publisher(...),
+// 	 	 	 	 	  node.create_subscription(...),
+// 	 	 	 	 	  create_timer(...),
+// 	 	 	 	 	  rclpy.spin(node) runs callbacks.
+
+
+
+// Messages & backing storage //
 static std_msgs__msg__Int32MultiArray msg_cmd_echo;   // TX echo
 static std_msgs__msg__Int32MultiArray msg_enc;        // TX encoders
-static std_msgs__msg__Int32MultiArray msg_cmd_rx;     // RX command
+//static std_msgs__msg__Int32MultiArray msg_cmd_rx;     // RX command
+//static int32_t rx_data[4]  = {0,0,0,0};
+//static volatile int32_t last_cmd[4] = {0,0,0,0};
+
+// Messages & backing storage
+static std_msgs__msg__Float32MultiArray msg_cmd_rx;   // RX command
+static float rx_data[3]  = {0,0,0};
+static volatile float last_cmd[3] = {0,0,0};          // targets: vx, vy, wz
 
 static int32_t cmd_data[4] = {0,0,0,0};
 static int32_t enc_data[4] = {0,0,0,0};
-static int32_t rx_data[4]  = {0,0,0,0};
-static volatile int32_t last_cmd[4] = {0,0,0,0};
+*/
 
+// RX commands: [vx_mmps, vy_mmps, wz_radps]
+static rcl_subscription_t sub_cmd;
+static std_msgs__msg__Float32MultiArray msg_cmd_rx;
+static float rx_data[3] = {0,0,0};
+static volatile float last_cmd[3] = {0,0,0};
+
+// Optional config: [v_step_mmps, wz_step_radps]
+static rcl_subscription_t sub_cfg;
+static std_msgs__msg__Float32MultiArray msg_cfg_rx;
+static float cfg_buf[2] = {20.0f, 0.1f};
+
+static rcl_publisher_t pub_ccr;
+static std_msgs__msg__Int32MultiArray msg_ccr;
+static int32_t ccr_data[4] = {0,0,0,0};
+
+/*
+Using fixed-size Int32MultiArray by pointing msg->data to pre-allocated arrays (no heap allocations at runtime).
+
+init_multiarray_4() sets m->data.data = backing; m->data.size = 4; m->data.capacity = 4; and clears the layout (which is fine if you don’t need it).
+
+ROS 2 Python analogy:
+
+from std_msgs.msg import Int32MultiArray
+msg = Int32MultiArray()
+msg.data = [0,0,0,0]  # layout usually ignored
+ */
 
 // ----------------- Nexus Part -----------------
 volatile uint16_t currCount[4] = {0};		// {RL, FL, FR,, RR}
@@ -146,6 +207,7 @@ static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
 static void MX_UART5_Init(void);
 static void MX_ADC1_Init(void);
+static void MX_TIM6_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
@@ -160,8 +222,7 @@ void microros_deallocate(void * pointer, void * state);
 void * microros_reallocate(void * pointer, size_t size, void * state);
 void * microros_zero_allocate(size_t number_of_elements, size_t size_of_element, void * state);
 
-static inline int32_t clamp500(int32_t x);
-static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing);
+//static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing);
 static void wheel_cmd_cb(const void * msgin);
 static void timer_cb(rcl_timer_t * t, int64_t last_call_time);
 
@@ -215,9 +276,9 @@ int main(void)
   MX_TIM2_Init();
   MX_UART5_Init();
   MX_ADC1_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
 
-  /*
     HAL_TIM_Base_Start_IT(&htim6);
 
 	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
@@ -235,7 +296,7 @@ int main(void)
 	HAL_Delay(3000);
 
 	init_car();
-*/
+
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -625,6 +686,44 @@ static void MX_TIM4_Init(void)
 }
 
 /**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 84-1;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 1000-1;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
   * @brief TIM8 Initialization Function
   * @param None
   * @retval None
@@ -833,10 +932,23 @@ static void MX_GPIO_Init(void)
 /* USER CODE BEGIN 4 */
 // ----------------- Old Part -----------------
 
-static inline int32_t clamp500(int32_t x){ return x<-500?-500:(x>500?500:x); }
-
 /* Fixed-size 4-element Int32MultiArray bound to external storage */
-static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing)
+/*
+static void init_float_multiarray_3(std_msgs__msg__Float32MultiArray* m, float* backing) {
+  std_msgs__msg__Float32MultiArray__init(m);
+  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
+  m->layout.data_offset = 0;
+  m->data.data = backing; m->data.size = 3; m->data.capacity = 3;
+}
+
+static void init_int_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing) {
+  std_msgs__msg__Int32MultiArray__init(m);
+  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
+  m->layout.data_offset = 0;
+  m->data.data = backing; m->data.size = 4; m->data.capacity = 4;
+}
+*/
+static void init_int_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing)
 {
   std_msgs__msg__Int32MultiArray__init(m);
   m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
@@ -844,101 +956,61 @@ static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backin
   m->data.data = backing; m->data.size = 4; m->data.capacity = 4;
 }
 
-typedef struct {
-  TIM_HandleTypeDef* htim_pwm;
-  uint32_t           ch_pwm;
-  GPIO_TypeDef*      port_ina;  uint16_t pin_ina;
-  GPIO_TypeDef*      port_inb;  uint16_t pin_inb;
-  GPIO_TypeDef*      port_vdd;  uint16_t pin_vdd;
-  TIM_HandleTypeDef* htim_enc;
-  int16_t            last_raw;
-  int32_t            accum;
-} motor_t;
-
-/* Map FL: PWM TIM2_CH1, direction GPIOs, VDD, Encoder TIM1 */
-static motor_t M_FL = {
-  .htim_pwm = &htim2, .ch_pwm = TIM_CHANNEL_1,
-  .port_ina = GPIOC,  .pin_ina = FL_INA_GPO_Pin,
-  .port_inb = GPIOC,  .pin_inb = FL_INB_GPO_Pin,
-  .port_vdd = GPIOC,  .pin_vdd = FL_VDD_GPO_Pin,
-  .htim_enc = &htim1,
-  .last_raw = 0, .accum = 0
-};
-
-static void motor_enable(motor_t* m)
+static void init_float_multiarray_fixed(std_msgs__msg__Float32MultiArray* m, float* backing, size_t n)
 {
-  /* power/enable pin */
-  HAL_GPIO_WritePin(m->port_vdd, m->pin_vdd, GPIO_PIN_SET);
-
-  /* start PWM channel and set 0% duty */
-  HAL_TIM_PWM_Start(m->htim_pwm, m->ch_pwm);
-  __HAL_TIM_SET_COMPARE(m->htim_pwm, m->ch_pwm, 0);
+  std_msgs__msg__Float32MultiArray__init(m);
+  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
+  m->layout.data_offset = 0;
+  m->data.data = backing; m->data.size = n; m->data.capacity = n;
 }
 
-static void motor_set_speed(motor_t* m, int32_t v/*-500..500*/)
-{
-  v = clamp500(v);
-  /* set direction */
-  if (v >= 0) {
-    HAL_GPIO_WritePin(m->port_ina, m->pin_ina, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(m->port_inb, m->pin_inb, GPIO_PIN_RESET);
-  } else {
-    HAL_GPIO_WritePin(m->port_ina, m->pin_ina, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(m->port_inb, m->pin_inb, GPIO_PIN_SET);
-    v = -v;
-  }
-  /* scale to ARR (TIM2 configured ARR=4199 -> 20 kHz PWM) */
-  uint32_t arr  = __HAL_TIM_GET_AUTORELOAD(m->htim_pwm);
-  uint32_t duty = (uint32_t)((v * (int32_t)arr) / 500);
-  if (duty > arr) duty = arr;
-  __HAL_TIM_SET_COMPARE(m->htim_pwm, m->ch_pwm, duty);
-}
-
-static void encoder_start(motor_t* m)
-{
-  __HAL_TIM_SET_COUNTER(m->htim_enc, 0);
-  HAL_TIM_Encoder_Start(m->htim_enc, TIM_CHANNEL_ALL);
-  m->last_raw = 0;
-  m->accum    = 0;
-}
-
-/* Read encoder with wrap-safe accumulation to 32-bit */
+/*
+// Read encoder with wrap-safe accumulation to 32-bit
 static int32_t encoder_sample_accum(motor_t* m)
 {
   uint16_t raw = __HAL_TIM_GET_COUNTER(m->htim_enc);
   int16_t delta = (int16_t)((int32_t)raw - (int32_t)(uint16_t)m->last_raw);
   m->last_raw = (int16_t)raw;
-  m->accum += delta;              /* delta can be negative; handles wrap */
+  m->accum += delta;              // delta can be negative; handles wrap //
   return m->accum;
 }
+*/
 
+// Commands: [vx_mmps, vy_mmps, wz_radps]
 static void wheel_cmd_cb(const void * msgin)
 {
-  const std_msgs__msg__Int32MultiArray* in = (const std_msgs__msg__Int32MultiArray*)msgin;
-  int n = (in->data.size >= 4) ? 4 : (int)in->data.size;
+  const std_msgs__msg__Float32MultiArray *in =
+      (const std_msgs__msg__Float32MultiArray *)msgin;
 
-  for (int i = 0; i < 4; ++i) {
-    int32_t v = (i < n) ? in->data.data[i] : 0;
-    v = clamp500(v);
-    last_cmd[i] = v;
-    cmd_data[i] = v;              /* for /wheel_status/cmd_echo */
+  size_t n = (in->data.size < 3) ? in->data.size : 3;
+  for (size_t i = 0; i < 3; ++i) {
+    last_cmd[i] = (i < n) ? in->data.data[i] : 0.0f;
   }
-
-  /* drive only the first motor for now */
-  motor_set_speed(&M_FL, last_cmd[0]);
 }
 
-/* Timer @100 Hz: publish echo + encoder accum */
-static void timer_cb(rcl_timer_t * t, int64_t last_call_time)
+// Ramp config: [v_step_mmps, wz_step_radps]
+static void cfg_cb(const void * msgin)
 {
-  (void)t; (void)last_call_time;
+  const std_msgs__msg__Float32MultiArray *m =
+      (const std_msgs__msg__Float32MultiArray *)msgin;
 
-  /* encoder position (ticks since boot) for FL at index 0 */
-  enc_data[0] = encoder_sample_accum(&M_FL);
-  enc_data[1] = 0; enc_data[2] = 0; enc_data[3] = 0;
+  float vstep  = (m->data.size >= 1) ? m->data.data[0] : g_v_step_mmps;
+  float wzstep = (m->data.size >= 2) ? m->data.data[1] : g_wz_step_radps;
+  ctrlparams_set_steps(vstep, wzstep);
+}
 
-  (void)rcl_publish(&pub_cmd_echo, &msg_cmd_echo, NULL);
-  (void)rcl_publish(&pub_encoders, &msg_enc, NULL);
+// in timer
+static void timer_cb(rcl_timer_t * t, int64_t)
+{
+  (void)t;
+  Mecanum_Control(last_cmd[0], last_cmd[1], last_cmd[2]);
+
+  for (int i = 0; i < 4; ++i) ccr_data[i] = g_ccr_applied[i];
+   (void)rcl_publish(&pub_ccr, &msg_ccr, NULL);
+
+  // if you publish encoders here, keep it
+  // read_encoders(enc_data);
+  // (void)rcl_publish(&pub_encoders, &msg_enc, NULL);
 }
 
 // ----------------- Nexus Part -----------------
@@ -1026,24 +1098,17 @@ uint8_t Sonar_Update(void) {
 void StartDefaultTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
-  /*
-	HAL_GPIO_WritePin(GPIOB, RL_VDD_GPO_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(GPIOB, FL_INB_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(GPIOB, FL_INA_GPO_Pin, GPIO_PIN_SET);
 
-	// set 50% duty BEFORE starting (preload will latch on first update)
-	uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim2);
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, arr/2);
-
-	// start PWM on CH1 (do this once)
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
-  */
- 
 	/* -------- transport -------- */
 	  rmw_uros_set_custom_transport(
 	      true, (void *)&huart2,
 	      cubemx_transport_open, cubemx_transport_close,
 	      cubemx_transport_write, cubemx_transport_read);
+	  /*
+	   Hooks micro-ROS to UART (CubeMX/FreeRTOS).
+
+	   In desktop ROS you never do this—DDS handles transport. micro-ROS needs a tiny XRCE transport to reach the Agent.
+	   */
 
 	  /* -------- allocators -------- */
 	  rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
@@ -1051,55 +1116,117 @@ void StartDefaultTask(void *argument)
 	  freeRTOS_allocator.deallocate    = microros_deallocate;
 	  freeRTOS_allocator.reallocate    = microros_reallocate;
 	  freeRTOS_allocator.zero_allocate = microros_zero_allocate;
-	  (void)rcutils_set_default_allocator(&freeRTOS_allocator);
+	  rcutils_ret_t rc = rcutils_set_default_allocator(&freeRTOS_allocator);
+	  (void)rc;
+	  /*
+	   Makes all ROS allocations use your RTOS-safe allocator.
 
+	   ROS 2 Python analogy: not needed; Python/OS memory is already managed.
+	   */
 	  /* -------- wait for agent (~5 s) -------- */
 	  for (int i = 0; i < 50; ++i) {
 	    if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) break;
 	    osDelay(100);
 	  }
+	  /*
+	   Tries for ~5 s before proceeding so you don’t hard-fail if the Agent isn’t up yet.
 
-	  /* -------- start peripherals for FL motor -------- */
-	  motor_enable(&M_FL);      /* PWM + enable pin */
-	  encoder_start(&M_FL);     /* TIM1 encoder */
+	   ROS 2 Python analogy: usually unnecessary; your node just runs and discovers peers later.
+	   */
 
 	  /* -------- micro-ROS graph -------- */
 	  rclc_support_t support;
 	  rcl_allocator_t allocator = rcl_get_default_allocator();
-	  CHECK(rclc_support_init(&support, 0, NULL, &allocator));
+	  rclc_support_init(&support, 0, NULL, &allocator);
+	  //CHECK();
 
 	  rcl_node_t node;
-	  CHECK(rclc_node_init_default(&node, "nucleo_f446re", "", &support));
+	  rclc_node_init_default(&node, "nucleo_f446re", "", &support);
+	  //CHECK();
+	  /*
+	    Node creation (name: nucleo_f446re).
 
-	  init_multiarray_4(&msg_cmd_echo, cmd_data);
-	  init_multiarray_4(&msg_enc,      enc_data);
-	  init_multiarray_4(&msg_cmd_rx,   rx_data);
+		ROS 2 Python analogy:
+		rclpy.init()
+		node = rclpy.create_node("nucleo_f446re")
+	   */
 
-	  CHECK(rclc_publisher_init_default(
-	      &pub_cmd_echo, &node,
-	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
-	      "wheel_status/cmd_echo"));
+	  //init_multiarray_4(&msg_cmd_rx,   rx_data);
 
-	  CHECK(rclc_publisher_init_default(
-	      &pub_encoders, &node,
-	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
-	      "wheel_status/encoders"));
+	  /*
+	   Bind messages to fixed arrays
+	   */
+	  //CHECK();
+	  //init_multiarray_4(&msg_cmd_echo, cmd_data);
+/*
+	  rclc_publisher_init_default(
+	  	      &pub_cmd_echo, &node,
+	  	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+	  	      "wheel_status/cmd_echo");
+*/
+	  //CHECK();
+	  //init_multiarray_4(&msg_enc,      enc_data);
+	 /* rclc_publisher_init_default(
+	  	      &pub_encoders, &node,
+	  	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+	  	      "encoder_wheels");
+	  */
+	  /*
+	   Two publishers: /wheel_status/cmd_echo and /wheel_status/encoders.
 
-	  CHECK(rclc_subscription_init_default(
+		ROS 2 Python analogy:
+		pub_enc = node.create_publisher(Int32MultiArray, "wheel_status/encoders", 10)
+	   */
+
+	  //CHECK();
+	  //init_float_multiarray_3(&msg_cmd_rx, rx_data);
+	  init_float_multiarray_fixed(&msg_cmd_rx, rx_data, 3);
+
+	  rclc_subscription_init_default(
 	      &sub_cmd, &node,
-	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
-	      "wheel_cmd"));
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+	      "twist_nexus");
+	  /*
+	    One subscription to /wheel_cmd.
+
+		ROS 2 Python analogy:
+		sub = node.create_subscription(Int32MultiArray, "wheel_cmd", cb, 10)
+	   */
 
 	  /* 100 Hz timer (new API with autostart) */
-	  CHECK(rclc_timer_init_default2(&timer, &support, RCL_MS_TO_NS(10), timer_cb, true));
+	  //CHECK();
+	  rclc_timer_init_default2(&timer, &support, RCL_MS_TO_NS(10), timer_cb, true);
+	  /*
+	   Timer at 100 Hz (10 ms period), starts automatically.
+	   ROS 2 Python analogy: node.create_timer(0.01, timer_cb).
+	   */
+	  //CHECK();
+	  //rclc_executor_init(&executor, &support.context, 2, &allocator);
+	  init_float_multiarray_fixed(&msg_cfg_rx, cfg_buf, 2);
+	  rclc_subscription_init_default(
+	      &sub_cfg, &node,
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+	      "nexus_ctrl/config");
+	  //CHECK();
+	  init_int_multiarray_4(&msg_ccr, ccr_data);
+	  rclc_publisher_init_default(
+	      &pub_ccr, &node,
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+	      "wheel_status/ccr");
 
-	  CHECK(rclc_executor_init(&executor, &support.context, 2, &allocator));
-	  CHECK(rclc_executor_add_subscription(&executor, &sub_cmd, &msg_cmd_rx, &wheel_cmd_cb, ON_NEW_DATA));
-	  CHECK(rclc_executor_add_timer(&executor, &timer));
-
+	  rclc_executor_init(&executor, &support.context, /*handles*/ 3, &allocator);
+	  rclc_executor_add_subscription(&executor, &sub_cmd, &msg_cmd_rx, &wheel_cmd_cb, ON_NEW_DATA);
+	  rclc_executor_add_subscription(&executor, &sub_cfg, &msg_cfg_rx, &cfg_cb,     ON_NEW_DATA);
+	  //CHECK();
+	  rclc_executor_add_timer(&executor, &timer);
 	  for (;;) {
 	    (void)rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
 	  }
+	  /*
+	   The executor is the event loop: it drives your subscription callback and timer.
+	   spin_some() runs for up to 5 ms worth of work each loop, letting your task yield to FreeRTOS.
+	   ROS 2 Python analogy: rclpy.spin(node) (or executor.spin_once() if you need fine control).
+	   */
   /* USER CODE END 5 */
 }
 
@@ -1114,7 +1241,7 @@ void StartDefaultTask(void *argument)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-	/*
+
 	if (htim->Instance == TIM6) {
 		currCount[0] = __HAL_TIM_GET_COUNTER(&htim4);
 		currCount[1] = __HAL_TIM_GET_COUNTER(&htim1);
@@ -1135,7 +1262,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		  pastcurrCount[i] = currCount[i];
 	  }
 	}
-	*/
+
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM7)
   {
