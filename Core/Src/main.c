@@ -22,6 +22,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+// ----------------- Micro-ROS Part -----------------
 #include <rcl/rcl.h>
 #include <rcl/error_handling.h>
 #include <rclc/rclc.h>
@@ -35,6 +36,10 @@
 #include <std_msgs/msg/int32_multi_array.h>
 #include <std_msgs/msg/int32.h>
 
+// ----------------- Nexus Part -----------------
+#include "global_definitions.h"
+#include "myMotor.h"
+#include "mySensors.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -65,13 +70,19 @@
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim8;
 
+UART_HandleTypeDef huart5;
 UART_HandleTypeDef huart2;
+DMA_HandleTypeDef hdma_uart5_rx;
+DMA_HandleTypeDef hdma_uart5_tx;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
@@ -83,13 +94,13 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 /* USER CODE BEGIN PV */
-/* ---------- micro-ROS entities ---------- */
+// ----------------- micro-ROS entities -----------------
 static rcl_publisher_t pub_cmd_echo, pub_encoders;
 static rcl_subscription_t sub_cmd;
 static rcl_timer_t timer;
 static rclc_executor_t executor;
 
-/* Messages & backing storage */
+// Messages & backing storage */
 static std_msgs__msg__Int32MultiArray msg_cmd_echo;   // TX echo
 static std_msgs__msg__Int32MultiArray msg_enc;        // TX encoders
 static std_msgs__msg__Int32MultiArray msg_cmd_rx;     // RX command
@@ -98,6 +109,29 @@ static int32_t cmd_data[4] = {0,0,0,0};
 static int32_t enc_data[4] = {0,0,0,0};
 static int32_t rx_data[4]  = {0,0,0,0};
 static volatile int32_t last_cmd[4] = {0,0,0,0};
+
+
+// ----------------- Nexus Part -----------------
+volatile uint16_t currCount[4] = {0};		// {RL, FL, FR,, RR}
+uint16_t pastcurrCount[4] = {0};			// {RL, FL, FR,, RR}
+int32_t deltaEncoder[4] = {0};
+
+int32_t omega[4] = {0};     					// rad/s
+
+volatile uint8_t uartTxReady = 1; 			// 1 = free, 0 = busy
+
+SONAR_HandleTypeDef sonar1;
+SONAR_HandleTypeDef sonar2;
+SONAR_HandleTypeDef sonar3;
+SONAR_HandleTypeDef sonar4;
+
+uint8_t sonarCurr = 0;
+uint16_t distBuf[4] = {0};
+float tempBuf[4];
+
+uint32_t adcBuffer[NUM_MOTORS];     // DMA stores ADC results here
+uint8_t motorFaultFlags[10] = {0};  // General array for faults, first 4 are for motors: [RL, FL, FR, RR, ....]
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -110,9 +144,12 @@ static void MX_TIM4_Init(void);
 static void MX_TIM8_Init(void);
 static void MX_USART2_UART_Init(void);
 static void MX_TIM2_Init(void);
+static void MX_UART5_Init(void);
+static void MX_ADC1_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
+// ----------------- Micro-ROS Part -----------------
 bool cubemx_transport_open(struct uxrCustomTransport * transport);
 bool cubemx_transport_close(struct uxrCustomTransport * transport);
 size_t cubemx_transport_write(struct uxrCustomTransport* transport, const uint8_t * buf, size_t len, uint8_t * err);
@@ -127,6 +164,11 @@ static inline int32_t clamp500(int32_t x);
 static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing);
 static void wheel_cmd_cb(const void * msgin);
 static void timer_cb(rcl_timer_t * t, int64_t last_call_time);
+
+
+// ----------------- Nexus Part -----------------
+void Process_Motor_Currents(void);
+uint8_t Sonar_Update(void);
 
 /* USER CODE END PFP */
 
@@ -171,8 +213,29 @@ int main(void)
   MX_TIM8_Init();
   MX_USART2_UART_Init();
   MX_TIM2_Init();
+  MX_UART5_Init();
+  MX_ADC1_Init();
   /* USER CODE BEGIN 2 */
 
+  /*
+    HAL_TIM_Base_Start_IT(&htim6);
+
+	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim8, TIM_CHANNEL_ALL);
+
+	SONAR_Init(&sonar1, &huart5, 0x11);
+	SONAR_Init(&sonar2, &huart5, 0x12);
+	SONAR_Init(&sonar3, &huart5, 0x13);
+	SONAR_Init(&sonar4, &huart5, 0x14);
+
+	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adcBuffer, NUM_MOTORS);
+
+	HAL_Delay(3000);
+
+	init_car();
+*/
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -270,6 +333,85 @@ void SystemClock_Config(void)
 }
 
 /**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_12B;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = ENABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 4;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_5;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Rank = 3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_9;
+  sConfig.Rank = 4;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
   * @brief TIM1 Initialization Function
   * @param None
   * @retval None
@@ -294,7 +436,7 @@ static void MX_TIM1_Init(void)
   htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim1.Init.RepetitionCounter = 0;
   htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
@@ -412,7 +554,7 @@ static void MX_TIM3_Init(void)
   htim3.Init.Period = 65535;
   htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
@@ -458,7 +600,7 @@ static void MX_TIM4_Init(void)
   htim4.Init.Period = 65535;
   htim4.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim4.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
@@ -507,7 +649,7 @@ static void MX_TIM8_Init(void)
   htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim8.Init.RepetitionCounter = 0;
   htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  sConfig.EncoderMode = TIM_ENCODERMODE_TI1;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
@@ -529,6 +671,39 @@ static void MX_TIM8_Init(void)
   /* USER CODE BEGIN TIM8_Init 2 */
 
   /* USER CODE END TIM8_Init 2 */
+
+}
+
+/**
+  * @brief UART5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART5_Init(void)
+{
+
+  /* USER CODE BEGIN UART5_Init 0 */
+
+  /* USER CODE END UART5_Init 0 */
+
+  /* USER CODE BEGIN UART5_Init 1 */
+
+  /* USER CODE END UART5_Init 1 */
+  huart5.Instance = UART5;
+  huart5.Init.BaudRate = 19200;
+  huart5.Init.WordLength = UART_WORDLENGTH_8B;
+  huart5.Init.StopBits = UART_STOPBITS_1;
+  huart5.Init.Parity = UART_PARITY_NONE;
+  huart5.Init.Mode = UART_MODE_TX_RX;
+  huart5.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart5.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART5_Init 2 */
+
+  /* USER CODE END UART5_Init 2 */
 
 }
 
@@ -573,14 +748,24 @@ static void MX_DMA_Init(void)
 
   /* DMA controller clock enable */
   __HAL_RCC_DMA1_CLK_ENABLE();
+  __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   /* DMA1_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
+  /* DMA1_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream7_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream7_IRQn);
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
 
 }
 
@@ -597,61 +782,48 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOH, RL_INB_GPO_Pin|RL_INA_GPO_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOC, FL_INA_GPO_Pin|FL_INB_GPO_Pin|RL_INB_GPO_Pin|RL_INA_GPO_Pin
+                          |RR_INB_GPO_Pin|Ultrasonic_DE_RE_Pin|RL_VDD_GPO_Pin|FL_VDD_GPO_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, FL_INA_GPO_Pin|FL_INB_GPO_Pin|RR_INA_GPO_Pin|RR_INB_GPO_Pin
-                          |RR_INB_GPOC4_Pin|RL_VDD_GPO_Pin|FL_VDD_GPO_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, FR_INA_GPO_Pin|FR_INA_GPOA10_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, FR_INB_GPO_Pin|RR_INA_GPOB13_Pin|FL_INA_GPOB14_Pin|FL_INB_GPOB15_Pin
-                          |FR_INB_GPOB5_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, RR_INA_GPO_Pin|FR_INB_GPO_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOC, RR_VDD_GPO_Pin|FR_VDD_GPO_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pins : RL_INB_GPO_Pin RL_INA_GPO_Pin */
-  GPIO_InitStruct.Pin = RL_INB_GPO_Pin|RL_INA_GPO_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOH, &GPIO_InitStruct);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin, GPIO_PIN_RESET);
 
-  /*Configure GPIO pins : FL_INA_GPO_Pin FL_INB_GPO_Pin RR_INA_GPO_Pin RR_INB_GPO_Pin
-                           RR_INB_GPOC4_Pin RR_VDD_GPO_Pin FR_VDD_GPO_Pin RL_VDD_GPO_Pin
-                           FL_VDD_GPO_Pin */
-  GPIO_InitStruct.Pin = FL_INA_GPO_Pin|FL_INB_GPO_Pin|RR_INA_GPO_Pin|RR_INB_GPO_Pin
-                          |RR_INB_GPOC4_Pin|RR_VDD_GPO_Pin|FR_VDD_GPO_Pin|RL_VDD_GPO_Pin
-                          |FL_VDD_GPO_Pin;
+  /*Configure GPIO pins : FL_INA_GPO_Pin FL_INB_GPO_Pin RL_INB_GPO_Pin RL_INA_GPO_Pin
+                           RR_INB_GPO_Pin Ultrasonic_DE_RE_Pin RR_VDD_GPO_Pin FR_VDD_GPO_Pin
+                           RL_VDD_GPO_Pin FL_VDD_GPO_Pin */
+  GPIO_InitStruct.Pin = FL_INA_GPO_Pin|FL_INB_GPO_Pin|RL_INB_GPO_Pin|RL_INA_GPO_Pin
+                          |RR_INB_GPO_Pin|Ultrasonic_DE_RE_Pin|RR_VDD_GPO_Pin|FR_VDD_GPO_Pin
+                          |RL_VDD_GPO_Pin|FL_VDD_GPO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : FR_INA_GPO_Pin FR_INA_GPOA10_Pin */
-  GPIO_InitStruct.Pin = FR_INA_GPO_Pin|FR_INA_GPOA10_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : FR_INB_GPO_Pin RR_INA_GPOB13_Pin FL_INA_GPOB14_Pin FL_INB_GPOB15_Pin
-                           FR_INB_GPOB5_Pin */
-  GPIO_InitStruct.Pin = FR_INB_GPO_Pin|RR_INA_GPOB13_Pin|FL_INA_GPOB14_Pin|FL_INB_GPOB15_Pin
-                          |FR_INB_GPOB5_Pin;
+  /*Configure GPIO pins : RR_INA_GPO_Pin FR_INB_GPO_Pin */
+  GPIO_InitStruct.Pin = RR_INA_GPO_Pin|FR_INB_GPO_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : FR_INA_GPO_Pin */
+  GPIO_InitStruct.Pin = FR_INA_GPO_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(FR_INA_GPO_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
 
@@ -659,6 +831,7 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+// ----------------- Old Part -----------------
 
 static inline int32_t clamp500(int32_t x){ return x<-500?-500:(x>500?500:x); }
 
@@ -768,6 +941,79 @@ static void timer_cb(rcl_timer_t * t, int64_t last_call_time)
   (void)rcl_publish(&pub_encoders, &msg_enc, NULL);
 }
 
+// ----------------- Nexus Part -----------------
+/*
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
+    if (huart->Instance == USART2){
+    	uartTxReady = true;
+	}
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
+{
+    if (hadc->Instance == ADC1)
+    {
+        //Process_Motor_Currents();
+    }
+}
+
+void Process_Motor_Currents(void)
+{
+	for (int i = 0; i < NUM_MOTORS; i++) {
+
+		// Convert ADC count to voltage
+		float vADC = (adcBuffer[i] / ADC_RESOLUTION) * ADC_REF_VOLTAGE;
+
+		// Undo voltage divider
+		float vCS = vADC * VOLTAGE_DIVIDER_GAIN;
+
+		// Convert to sense current through resistor
+		float iSense = vCS / R_SENSE;
+
+		// Convert to actual motor current
+		float iMotor = iSense * K_SENSE;
+
+		// Check for overcurrent
+		if (iMotor > STALL_CURRENT) {
+			motorFaultFlags[i] = 1;
+			Emergency_Stop();
+		} else {
+			motorFaultFlags[i] = 0;
+		}
+	}
+}
+
+uint8_t Sonar_Update(void) {
+    static uint8_t sonarCurr = 0;
+
+    // advance to next sensor
+    sonarCurr = (sonarCurr % 4) + 1;
+
+    switch (sonarCurr) {
+        case 1:
+            distBuf[1] = SONAR_ReadDistance(&sonar2);
+            tempBuf[1] = SONAR_ReadTemperature(&sonar2);
+            SONAR_Trigger(&sonar2);
+            break;
+        case 2:
+            distBuf[2] = SONAR_ReadDistance(&sonar3);
+            tempBuf[2] = SONAR_ReadTemperature(&sonar3);
+            SONAR_Trigger(&sonar3);
+            break;
+        case 3:
+            distBuf[3] = SONAR_ReadDistance(&sonar4);
+            tempBuf[3] = SONAR_ReadTemperature(&sonar4);
+            SONAR_Trigger(&sonar4);
+            break;
+        case 4:
+            distBuf[0] = SONAR_ReadDistance(&sonar1);
+            tempBuf[0] = SONAR_ReadTemperature(&sonar1);
+            SONAR_Trigger(&sonar1);
+            break;
+    }
+    return sonarCurr;
+}
+*/
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -868,7 +1114,28 @@ void StartDefaultTask(void *argument)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
+	/*
+	if (htim->Instance == TIM6) {
+		currCount[0] = __HAL_TIM_GET_COUNTER(&htim4);
+		currCount[1] = __HAL_TIM_GET_COUNTER(&htim1);
+		currCount[2] = __HAL_TIM_GET_COUNTER(&htim3);
+		currCount[3] = __HAL_TIM_GET_COUNTER(&htim8);
 
+		for (int i=0; i<4; i++) {
+
+		  deltaEncoder[i] = (int16_t)(currCount[i] - pastcurrCount[i]);		// {RL, FL, FR, RR}
+
+		  // Handling 16-bit overflow (if using 16-bit timers)
+		  if (deltaEncoder[i] > 32767)       deltaEncoder[i] -= 65536;
+		  else if (deltaEncoder[i] < -32768) deltaEncoder[i] += 65536;
+
+		  // Calculating wheel angular velocities (rad/s)
+		  omega[i] = (int32_t)(deltaEncoder[i] * 2 );  // omega[i] = (deltaEncoder[i] * 2 * PI) / (3072 * 0.001) = deltaEncoder[i] * 2.05
+
+		  pastcurrCount[i] = currCount[i];
+	  }
+	}
+	*/
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM7)
   {

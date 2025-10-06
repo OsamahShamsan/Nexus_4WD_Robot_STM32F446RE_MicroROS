@@ -1,0 +1,8 @@
+../Core/Src/NexusControl/myMotor.c:24:21:clamp	24	static
+../Core/Src/NexusControl/myMotor.c:30:21:ramp_step	24	static
+../Core/Src/NexusControl/myMotor.c:38:20:setMotorDir	24	static
+../Core/Src/NexusControl/myMotor.c:57:6:init_car	8	static
+../Core/Src/NexusControl/myMotor.c:122:6:Mecanum_Control	96	static
+../Core/Src/NexusControl/myMotor.c:177:6:Emergency_Stop	4	static
+../Core/Src/NexusControl/myMotor.c:188:6:PID_Init	24	static
+../Core/Src/NexusControl/myMotor.c:196:7:PID_Compute	40	static

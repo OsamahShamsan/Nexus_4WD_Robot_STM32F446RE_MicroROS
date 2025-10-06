@@ -1,0 +1,7 @@
+../Core/Src/NexusControl/mySensors.c:5:13:RS485_SetTX	8	static
+../Core/Src/NexusControl/mySensors.c:6:13:RS485_SetRX	8	static
+../Core/Src/NexusControl/mySensors.c:8:16:calcChecksum	24	static
+../Core/Src/NexusControl/mySensors.c:14:6:SONAR_Init	24	static
+../Core/Src/NexusControl/mySensors.c:22:9:SONAR_Trigger	24	static
+../Core/Src/NexusControl/mySensors.c:34:9:SONAR_ReadDistance	32	static
+../Core/Src/NexusControl/mySensors.c:56:9:SONAR_ReadTemperature	32	static
