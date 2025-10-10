@@ -25,6 +25,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ramfunc.h \
+ ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c.h \
+ ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h \
  ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h \
@@ -235,6 +237,28 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
  C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/float32_multi_array__struct.h \
  C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/float32_multi_array__functions.h \
  C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/float32_multi_array__type_support.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/imu.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/imu__struct.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/header__struct.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/geometry_msgs/msg/detail/quaternion__struct.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/geometry_msgs/msg/detail/vector3__struct.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/imu__functions.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/rosidl_generator_c__visibility_control.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/imu__type_support.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/temperature.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/temperature__struct.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/temperature__functions.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/temperature__type_support.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/rosidl_runtime_c/string_functions.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/range.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/range__struct.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/range__functions.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/range__type_support.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/joint_state.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/joint_state__struct.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/joint_state__functions.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/joint_state__type_support.h \
+ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/rosidl_runtime_c/primitives_sequence_functions.h \
  C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/NexusControl/global_definitions.h \
  C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/NexusControl/myMotor.h \
  C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/NexusControl/mySensors.h \
@@ -266,6 +290,8 @@ Core/Src/main.o: ../Core/Src/main.c ../Core/Inc/main.h \
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ex.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ramfunc.h:
+../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c.h:
+../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_i2c_ex.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h:
 ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h:
@@ -476,6 +502,28 @@ C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm
 C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/float32_multi_array__struct.h:
 C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/float32_multi_array__functions.h:
 C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/float32_multi_array__type_support.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/imu.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/imu__struct.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/std_msgs/msg/detail/header__struct.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/geometry_msgs/msg/detail/quaternion__struct.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/geometry_msgs/msg/detail/vector3__struct.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/imu__functions.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/rosidl_generator_c__visibility_control.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/imu__type_support.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/temperature.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/temperature__struct.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/temperature__functions.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/temperature__type_support.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/rosidl_runtime_c/string_functions.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/range.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/range__struct.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/range__functions.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/range__type_support.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/joint_state.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/joint_state__struct.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/joint_state__functions.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/sensor_msgs/msg/detail/joint_state__type_support.h:
+C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include/rosidl_runtime_c/primitives_sequence_functions.h:
 C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/NexusControl/global_definitions.h:
 C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/NexusControl/myMotor.h:
 C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/NexusControl/mySensors.h:

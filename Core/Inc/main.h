@@ -31,7 +31,14 @@ extern "C" {
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include <stdio.h>
+#include <string.h>
+#include <stdbool.h>
+#include <inttypes.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <math.h>
+#include <stdarg.h>
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -117,6 +124,10 @@ void Error_Handler(void);
 #define RL_ENC_B_T4C1_GPIO_Port GPIOB
 #define RL_ENC_A_T4C2_Pin GPIO_PIN_7
 #define RL_ENC_A_T4C2_GPIO_Port GPIOB
+#define IMU_SCL_I2C1_Pin GPIO_PIN_8
+#define IMU_SCL_I2C1_GPIO_Port GPIOB
+#define IMU_SDA_I2C1_Pin GPIO_PIN_9
+#define IMU_SDA_I2C1_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

@@ -91,9 +91,9 @@ The omnidirectional robot, using a Type-O wheel arrangement (as shown in the top
 
 inverse kinematics:
 
+	float w_RL = (1 / WHEEL_R) * (+ vx_current + vy_current  - (A_SUM * w_current));
   	float w_FL = (1 / WHEEL_R) * (+ vx_current - vy_current  - (A_SUM * w_current));
 	float w_FR = (1 / WHEEL_R) * (+ vx_current + vy_current  + (A_SUM * w_current));
-	float w_RL = (1 / WHEEL_R) * (+ vx_current + vy_current  - (A_SUM * w_current));
 	float w_RR = (1 / WHEEL_R) * (+ vx_current - vy_current  + (A_SUM * w_current));
 
 forward kinematics:
@@ -198,7 +198,7 @@ PID Controller Equation (speed control)
 // ----------------------------------------------------------------------------------
 // ----------- Geometry of the wheels and (Faulhaber) motor specifications ----------
 // ----------------------------------------------------------------------------------
-#define NUM_MOTORS 4
+#define NUM_WHEELS 						 4
 
 #define WHEEL_R              		 	50   	 			// [mm]	wheel_radius
 #define WHEEL_D              		 	100    				// [mm] wheel_diameter
@@ -316,7 +316,7 @@ PID Controller Equation (speed control)
 // ----------------------------------------------------------------------------------
 // ----------- Sensors parameters and Pin assignments -------------------------------
 // ----------------------------------------------------------------------------------
-#define NUM_SENSORS 					4					// number of sensors: 4x Dual ultrasonic sensors (DUS) and x4 Encoders
+#define NUM_SONARS  					4					// number of sensors: 4x Dual ultrasonic sensors (DUS) and x4 Encoders
 
 // ----------- SONAR ----------------------------------------------------------------
 #define SONAR_HEADER1   				0x55
@@ -336,6 +336,11 @@ PID Controller Equation (speed control)
 #define SONAR_TIMEOUT     				-2
 #define SONAR_INVALID     				-3
 
+// SONAR_ReadDistance() units: 1.0 if meters, 0.01 if cm, 0.001 if mm.
+#define SONAR_DIST_SCALE_M 				0.01f
+#define SONAR_MIN_RANGE_M  				0.02f
+#define SONAR_MAX_RANGE_M  				4.00f
+#define SONAR_FOV_RAD      				0.52f      // ~30 degrees
 
 // ----------- RS485 ----------------------------------------------------------------
 #define RS485_DIR_GPIO_Port 			GPIOC
@@ -343,6 +348,12 @@ PID Controller Equation (speed control)
 
 #define COLLISION_THRESHOLD 			150   				// stop if obstacle closer than 150 mm
 
+
+// ----------- IMU MPU6050 -----------------------------------------------------------
+#define MPU_ADDR_7B  0x68
+#define MPU_ADDR     (MPU_ADDR_7B << 1)   // HAL uses 8-bit address
+#define GRAVITY      9.80665f
+#define DEG2RAD      0.017453292519943295f
 
 
 // ----------------------------------------------------------------------------------

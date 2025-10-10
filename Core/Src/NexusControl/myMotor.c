@@ -1,6 +1,5 @@
 #include "myMotor.h"
 #include "global_definitions.h"
-#include "math.h"
 
 
 extern TIM_HandleTypeDef htim2;
@@ -54,9 +53,9 @@ static inline void setMotorDir(GPIO_TypeDef* INxA_Port, uint16_t INxA_Pin, GPIO_
 }
 
 // ----------------------------------------------------------------------------------
-// ----------- Motor control functions definitions  ---------------------------------
+// ----------- Motors control functions definitions  ---------------------------------
 // ----------------------------------------------------------------------------------
-void init_car(void){
+void init_motors(void){
 
 	// Set the direction to Forward (INA = 1) & (INB = 0)
 	// Rear Left
@@ -85,12 +84,15 @@ void init_car(void){
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);	// RR Motor
 
 	// Set RL, FL, FR and RR motors to initial speed. For example 0 PWM = 0 CCR = 0% Duty Cycle => t_on = 0 µs
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);	// RL Motor
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);	// FL Motor
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0);	// FR Motor
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);	// RR Motor
-
+	for(int i = 0; i <= 0; i++){
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i);	// RL Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, i);	// FL Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);	// FR Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, i);	// RR Motor
+	  	HAL_Delay(5);
+	  }
 }
+
 
 void Mecanum_Control(float vx_target, float vy_target, float w_target) {
 

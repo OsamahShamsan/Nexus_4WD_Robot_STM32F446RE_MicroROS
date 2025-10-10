@@ -36,6 +36,13 @@
 #include <std_msgs/msg/int32_multi_array.h>
 #include <std_msgs/msg/int32.h>
 #include "std_msgs/msg/float32_multi_array.h"
+#include "sensor_msgs/msg/imu.h"
+#include "sensor_msgs/msg/temperature.h"
+#include "rosidl_runtime_c/string_functions.h"
+#include "sensor_msgs/msg/range.h"
+#include "sensor_msgs/msg/joint_state.h"
+
+#include "rosidl_runtime_c/primitives_sequence_functions.h"
 
 // ----------------- Nexus Part -----------------
 #include "global_definitions.h"
@@ -55,6 +62,11 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
+#ifndef ENC_DT_S               // TIM6 @ 1 kHz -> 1 ms between encoder snapshots
+#define ENC_DT_S (0.001f)
+#endif
+
+
 // (try/except) or assert return codes
 /*
 #ifdef CHECK
@@ -92,6 +104,8 @@ rcl_publisher_init(&pub_encoders, &node,
 ADC_HandleTypeDef hadc1;
 DMA_HandleTypeDef hdma_adc1;
 
+I2C_HandleTypeDef hi2c1;
+
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
@@ -101,8 +115,6 @@ TIM_HandleTypeDef htim8;
 
 UART_HandleTypeDef huart5;
 UART_HandleTypeDef huart2;
-DMA_HandleTypeDef hdma_uart5_rx;
-DMA_HandleTypeDef hdma_uart5_tx;
 DMA_HandleTypeDef hdma_usart2_rx;
 DMA_HandleTypeDef hdma_usart2_tx;
 
@@ -150,6 +162,7 @@ static rcl_subscription_t sub_cmd;
 static std_msgs__msg__Float32MultiArray msg_cmd_rx;
 static float rx_data[3] = {0,0,0};
 static volatile float last_cmd[3] = {0,0,0};
+static volatile uint64_t last_cmd_stamp_ns = 0;
 
 // Optional config: [v_step_mmps, wz_step_radps]
 static rcl_subscription_t sub_cfg;
@@ -159,6 +172,11 @@ static float cfg_buf[2] = {20.0f, 0.1f};
 static rcl_publisher_t pub_ccr;
 static std_msgs__msg__Int32MultiArray msg_ccr;
 static int32_t ccr_data[4] = {0,0,0,0};
+
+static rcl_publisher_t pub_imu;
+static rcl_publisher_t pub_temp;
+static sensor_msgs__msg__Imu imu_msg;
+static sensor_msgs__msg__Temperature temp_msg;
 
 /*
 Using fixed-size Int32MultiArray by pointing msg->data to pre-allocated arrays (no heap allocations at runtime).
@@ -179,8 +197,6 @@ int32_t deltaEncoder[4] = {0};
 
 int32_t omega[4] = {0};     					// rad/s
 
-volatile uint8_t uartTxReady = 1; 			// 1 = free, 0 = busy
-
 SONAR_HandleTypeDef sonar1;
 SONAR_HandleTypeDef sonar2;
 SONAR_HandleTypeDef sonar3;
@@ -190,8 +206,36 @@ uint8_t sonarCurr = 0;
 uint16_t distBuf[4] = {0};
 float tempBuf[4];
 
-uint32_t adcBuffer[NUM_MOTORS];     // DMA stores ADC results here
+uint32_t adcBuffer[NUM_WHEELS];     // DMA stores ADC results here
 uint8_t motorFaultFlags[10] = {0};  // General array for faults, first 4 are for motors: [RL, FL, FR, RR, ....]
+
+static const char* WHEEL_NAMES[NUM_WHEELS] = {
+  "wheel_rl","wheel_fl","wheel_fr","wheel_rr"
+};
+
+#ifndef NUM_MOTORS
+#define NUM_MOTORS 4
+#endif
+volatile float g_motor_current_A[NUM_MOTORS];  // updated in Process_Motor_Currents
+volatile int32_t g_motor_fault_flag[NUM_MOTORS];
+
+int CCR[4];
+
+// ---------- Publishers & messages ----------
+rcl_publisher_t pub_sonar_range[NUM_SONARS];
+rcl_publisher_t pub_sonar_temp[NUM_SONARS];
+rcl_publisher_t pub_joint;
+rcl_publisher_t pub_motor_current;
+rcl_publisher_t pub_motor_fault;
+
+sensor_msgs__msg__Range       sonar_range_msg[NUM_SONARS];
+sensor_msgs__msg__Temperature sonar_temp_msg_[NUM_SONARS];
+sensor_msgs__msg__JointState  joint_msg;
+std_msgs__msg__Float32MultiArray motor_currents_msg;
+std_msgs__msg__Int32MultiArray   motor_faults_msg;
+
+// Encoder publishing state (positions)
+static double wheel_pos_rad[NUM_WHEELS] = {0};
 
 /* USER CODE END PV */
 
@@ -208,33 +252,118 @@ static void MX_TIM2_Init(void);
 static void MX_UART5_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_I2C1_Init(void);
 void StartDefaultTask(void *argument);
 
 /* USER CODE BEGIN PFP */
 // ----------------- Micro-ROS Part -----------------
+// Opens and initializes the custom transport (e.g., UART) for micro-ROS communication
 bool cubemx_transport_open(struct uxrCustomTransport * transport);
+
+// Closes and cleans up the custom transport connection
 bool cubemx_transport_close(struct uxrCustomTransport * transport);
+
+// Writes (sends) data through the custom transport
 size_t cubemx_transport_write(struct uxrCustomTransport* transport, const uint8_t * buf, size_t len, uint8_t * err);
+
+// Reads (receives) data from the custom transport with a timeout
 size_t cubemx_transport_read(struct uxrCustomTransport* transport, uint8_t* buf, size_t len, int timeout, uint8_t* err);
 
+// Allocates a memory block of the given size (used by micro-ROS memory management)
 void * microros_allocate(size_t size, void * state);
+
+// Frees a previously allocated memory block
 void microros_deallocate(void * pointer, void * state);
+
+// Reallocates an existing memory block to a new size
 void * microros_reallocate(void * pointer, size_t size, void * state);
+
+// Allocates zero-initialized memory for an array (similar to calloc)
 void * microros_zero_allocate(size_t number_of_elements, size_t size_of_element, void * state);
 
-//static void init_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing);
+// Callback function triggered when a wheel command message is received
 static void wheel_cmd_cb(const void * msgin);
+
+// Callback function executed periodically by a timer
 static void timer_cb(rcl_timer_t * t, int64_t last_call_time);
 
+// Reads sonar sensors and publishes their range and temperature data
+//static void sonar_service_and_publish(void);
+
+// Publishes current readings and fault status from the motors
+static void publish_motor_currents_and_faults(void);
+
+// Publishes the robot’s joint states using data from the encoders
+static void publish_joint_state_from_encoders(void);
+
+// Returns the current system time in nanoseconds (high-resolution timestamp)
+static inline uint64_t now_nanos(void);
 
 // ----------------- Nexus Part -----------------
 void Process_Motor_Currents(void);
 uint8_t Sonar_Update(void);
-
+void nexus_bringup(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void nexus_bringup(void){
+    HAL_TIM_Base_Start_IT(&htim6);
+
+	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
+	HAL_TIM_Encoder_Start(&htim8, TIM_CHANNEL_ALL);
+
+	SONAR_Init(&sonar1, &huart5, 0x11);
+	SONAR_Init(&sonar2, &huart5, 0x12);
+	SONAR_Init(&sonar3, &huart5, 0x13);
+	SONAR_Init(&sonar4, &huart5, 0x14);
+
+	//HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adcBuffer, NUM_WHEELS);
+
+	//mpu_init();
+
+	init_motors();
+}
+
+// Initializes an Int32MultiArray message with 4 fixed elements backed by a provided buffer
+static void init_int_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing)
+{
+  std_msgs__msg__Int32MultiArray__init(m);
+  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
+  m->layout.data_offset = 0;
+  m->data.data = backing; m->data.size = 4; m->data.capacity = 4;
+}
+
+// Initializes a Float32MultiArray message with a fixed number (n) of elements backed by a provided buffer
+static void init_float_multiarray_fixed(std_msgs__msg__Float32MultiArray* m, float* backing, size_t n)
+{
+  std_msgs__msg__Float32MultiArray__init(m);
+  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
+  m->layout.data_offset = 0;
+  m->data.data = backing; m->data.size = n; m->data.capacity = n;
+}
+
+// Returns the current time in nanoseconds
+// Uses synchronized micro-ROS epoch time if available, otherwise falls back to local HAL tick count
+static inline uint64_t now_nanos(void)
+{
+  // Use Agent-synced time if available; fallback to local
+  uint64_t t = rmw_uros_epoch_nanos();
+  if (t == 0) {
+    // fallback: convert HAL_GetTick() ms to ns
+    t = (uint64_t)HAL_GetTick() * 1000000ULL;
+  }
+  return t;
+}
+
+
+static inline bool cmd_is_fresh(uint64_t now_ns, uint64_t max_age_ns) {
+  uint64_t age = now_ns - last_cmd_stamp_ns;
+  // handle startup: last_cmd_stamp_ns==0 -> treat as stale
+  return last_cmd_stamp_ns != 0 && age < max_age_ns;
+}
 
 /* USER CODE END 0 */
 
@@ -275,28 +404,12 @@ int main(void)
   MX_USART2_UART_Init();
   MX_TIM2_Init();
   MX_UART5_Init();
-  MX_ADC1_Init();
+  //MX_ADC1_Init();
   MX_TIM6_Init();
+  //MX_I2C1_Init();
   /* USER CODE BEGIN 2 */
-
-    HAL_TIM_Base_Start_IT(&htim6);
-
-	HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
-	HAL_TIM_Encoder_Start(&htim3, TIM_CHANNEL_ALL);
-	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
-	HAL_TIM_Encoder_Start(&htim8, TIM_CHANNEL_ALL);
-
-	SONAR_Init(&sonar1, &huart5, 0x11);
-	SONAR_Init(&sonar2, &huart5, 0x12);
-	SONAR_Init(&sonar3, &huart5, 0x13);
-	SONAR_Init(&sonar4, &huart5, 0x14);
-
-	HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adcBuffer, NUM_MOTORS);
-
-	HAL_Delay(3000);
-
-	init_car();
-
+  nexus_bringup();
+  HAL_Delay(2000);
   /* USER CODE END 2 */
 
   /* Init scheduler */
@@ -473,6 +586,40 @@ static void MX_ADC1_Init(void)
 }
 
 /**
+  * @brief I2C1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2C1_Init(void)
+{
+
+  /* USER CODE BEGIN I2C1_Init 0 */
+
+  /* USER CODE END I2C1_Init 0 */
+
+  /* USER CODE BEGIN I2C1_Init 1 */
+
+  /* USER CODE END I2C1_Init 1 */
+  hi2c1.Instance = I2C1;
+  hi2c1.Init.ClockSpeed = 400000;
+  hi2c1.Init.DutyCycle = I2C_DUTYCYCLE_2;
+  hi2c1.Init.OwnAddress1 = 0;
+  hi2c1.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
+  hi2c1.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
+  hi2c1.Init.OwnAddress2 = 0;
+  hi2c1.Init.GeneralCallMode = I2C_GENERALCALL_DISABLE;
+  hi2c1.Init.NoStretchMode = I2C_NOSTRETCH_DISABLE;
+  if (HAL_I2C_Init(&hi2c1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2C1_Init 2 */
+
+  /* USER CODE END I2C1_Init 2 */
+
+}
+
+/**
   * @brief TIM1 Initialization Function
   * @param None
   * @retval None
@@ -542,9 +689,9 @@ static void MX_TIM2_Init(void)
 
   /* USER CODE END TIM2_Init 1 */
   htim2.Instance = TIM2;
-  htim2.Init.Prescaler = 0;
+  htim2.Init.Prescaler = 9-1;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim2.Init.Period = 4199;
+  htim2.Init.Period = 500-1;
   htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
   if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
@@ -822,7 +969,7 @@ static void MX_USART2_UART_Init(void)
 
   /* USER CODE END USART2_Init 1 */
   huart2.Instance = USART2;
-  huart2.Init.BaudRate = 115200;
+  huart2.Init.BaudRate = 921600;
   huart2.Init.WordLength = UART_WORDLENGTH_8B;
   huart2.Init.StopBits = UART_STOPBITS_1;
   huart2.Init.Parity = UART_PARITY_NONE;
@@ -850,18 +997,12 @@ static void MX_DMA_Init(void)
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Stream0_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
   /* DMA1_Stream5_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream5_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream5_IRQn);
   /* DMA1_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA1_Stream6_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA1_Stream6_IRQn);
-  /* DMA1_Stream7_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream7_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream7_IRQn);
   /* DMA2_Stream0_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
@@ -930,7 +1071,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-// ----------------- Old Part -----------------
 
 /* Fixed-size 4-element Int32MultiArray bound to external storage */
 /*
@@ -948,24 +1088,146 @@ static void init_int_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* ba
   m->data.data = backing; m->data.size = 4; m->data.capacity = 4;
 }
 */
-static void init_int_multiarray_4(std_msgs__msg__Int32MultiArray* m, int32_t* backing)
+
+static void publish_motor_currents_and_faults(void)
 {
-  std_msgs__msg__Int32MultiArray__init(m);
-  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
-  m->layout.data_offset = 0;
-  m->data.data = backing; m->data.size = 4; m->data.capacity = 4;
+  for (int i=0;i<NUM_MOTORS;i++) {
+    motor_currents_msg.data.data[i] = g_motor_current_A[i];
+    motor_faults_msg.data.data[i]   = g_motor_fault_flag[i];
+  }
+  rcl_publish(&pub_motor_current, &motor_currents_msg, NULL);
+  rcl_publish(&pub_motor_fault,   &motor_faults_msg,   NULL);
 }
 
-static void init_float_multiarray_fixed(std_msgs__msg__Float32MultiArray* m, float* backing, size_t n)
-{
-  std_msgs__msg__Float32MultiArray__init(m);
-  m->layout.dim.data = NULL; m->layout.dim.size = 0; m->layout.dim.capacity = 0;
-  m->layout.data_offset = 0;
-  m->data.data = backing; m->data.size = n; m->data.capacity = n;
-}
 
 /*
+static void sonar_service_and_publish(void)
+{
+
+  uint8_t idx1 = Sonar_Update();  // returns 1..4 per your code
+  int i = (idx1 - 1) & 0x3;
+
+  // Convert to meters (adjust SONAR_DIST_SCALE_M to your driver)
+  float dist_m = ((float)distBuf[i]) * SONAR_DIST_SCALE_M;
+  float temp_c = (float)tempBuf[i];   // assume °C; adjust if needed
+
+  // Clamp to message limits
+  if (dist_m < SONAR_MIN_RANGE_M) dist_m = SONAR_MIN_RANGE_M;
+  if (dist_m > SONAR_MAX_RANGE_M) dist_m = SONAR_MAX_RANGE_M;
+
+  uint64_t t = now_nanos();
+
+  sensor_msgs__msg__Range *rng = &sonar_range_msg[i];
+  rng->header.stamp.sec     = (int32_t)(t / 1000000000ULL);
+  rng->header.stamp.nanosec = (uint32_t)(t % 1000000000ULL);
+  rng->range = dist_m;
+  rcl_publish(&pub_sonar_range[i], rng, NULL);
+
+  sensor_msgs__msg__Temperature *tp = &sonar_temp_msg_[i];
+  tp->header.stamp.sec     = rng->header.stamp.sec;
+  tp->header.stamp.nanosec = rng->header.stamp.nanosec;
+  tp->temperature = temp_c;
+  tp->variance = 0.5;  // optional
+  rcl_publish(&pub_sonar_temp[i], tp, NULL);
+
+}
+*/
+
+const float TICK_TO_RAD = (2.0 * M_PI) / (double)TICKS_PER_REV;
+
+static void publish_joint_state_from_encoders(void)
+{
+  // Snapshot encoder deltas atomically
+  int16_t delta[NUM_WHEELS];
+
+  //__disable_irq();
+	  delta[0] = __HAL_TIM_GET_COUNTER(&htim4);
+	  delta[1] = __HAL_TIM_GET_COUNTER(&htim1);
+	  delta[2] = __HAL_TIM_GET_COUNTER(&htim3);
+	  delta[3] = __HAL_TIM_GET_COUNTER(&htim8);
+  //__enable_irq();
+
+  // velocity in rad/s, position in rad (integrated)
+  for (int i=0;i<NUM_WHEELS;i++) {
+    double vel = ((double)delta[i]) * TICK_TO_RAD / (double)ENC_DT_S;
+    joint_msg.velocity.data[i] = vel;
+
+    wheel_pos_rad[i] += ((double)delta[i]) * TICK_TO_RAD;
+    joint_msg.position.data[i] = wheel_pos_rad[i];
+
+    joint_msg.effort.data[i] = 0.0;
+  }
+
+  uint64_t t = now_nanos();
+  joint_msg.header.stamp.sec     = (int32_t)(t / 1000000000ULL);
+  joint_msg.header.stamp.nanosec = (uint32_t)(t % 1000000000ULL);
+  // frame_id is typically empty for JointState; leave default
+
+  rcl_publish(&pub_joint, &joint_msg, NULL);
+}
+
+
+// 200 Hz timer callback IMU
+/*
+static void imu_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
+{
+  (void)timer; (void)last_call_time;
+
+  float ax, ay, az, gx, gy, gz, tc;
+  if (!mpu_read_sample(&ax,&ay,&az,&gx,&gy,&gz,&tc)) return;
+
+  uint64_t t = now_nanos();
+  imu_msg.header.stamp.sec     = (int32_t)(t / 1000000000ULL);
+  imu_msg.header.stamp.nanosec = (uint32_t)(t % 1000000000ULL);
+
+  imu_msg.angular_velocity.x = gx;
+  imu_msg.angular_velocity.y = gy;
+  imu_msg.angular_velocity.z = gz;
+
+  imu_msg.linear_acceleration.x = ax;
+  imu_msg.linear_acceleration.y = ay;
+  imu_msg.linear_acceleration.z = az;
+
+  // No orientation from the chip; mark as invalid
+  imu_msg.orientation.x = imu_msg.orientation.y = imu_msg.orientation.z = imu_msg.orientation.w = 0.0;
+  imu_msg.orientation_covariance[0] = -1.0;  // per message spec
+
+  // Rough diagonal covariances to start (tune later)
+  const double gyro_var  = (0.02 * 0.02);   // (rad/s)^2
+  const double accel_var = (0.05 * 0.05);   // (m/s^2)^2
+  for (int i=0;i<9;i++) {
+    imu_msg.angular_velocity_covariance[i]  = 0.0;
+    imu_msg.linear_acceleration_covariance[i] = 0.0;
+  }
+  imu_msg.angular_velocity_covariance[0] = gyro_var;
+  imu_msg.angular_velocity_covariance[4] = gyro_var;
+  imu_msg.angular_velocity_covariance[8] = gyro_var;
+  imu_msg.linear_acceleration_covariance[0] = accel_var;
+  imu_msg.linear_acceleration_covariance[4] = accel_var;
+  imu_msg.linear_acceleration_covariance[8] = accel_var;
+
+  rcl_ret_t rc1 = rcl_publish(&pub_imu, &imu_msg, NULL);
+  if (rc1 != RCL_RET_OK) { // Error handle  }
+
+  static uint8_t decim = 0;
+  if (++decim >= 4) {  // publish temperature at 50 Hz
+    decim = 0;
+    temp_msg.header.stamp.sec     = imu_msg.header.stamp.sec;
+    temp_msg.header.stamp.nanosec = imu_msg.header.stamp.nanosec;
+    temp_msg.temperature = tc;
+    temp_msg.variance = 0.5; // arbitrary; tune if you use it
+    rcl_ret_t rc2 = rcl_publish(&pub_temp, &temp_msg, NULL);
+    if (rc2 != RCL_RET_OK) { // Error handle  }
+
+  }
+
+}
+
+*/
+
+
 // Read encoder with wrap-safe accumulation to 32-bit
+/*
 static int32_t encoder_sample_accum(motor_t* m)
 {
   uint16_t raw = __HAL_TIM_GET_COUNTER(m->htim_enc);
@@ -977,15 +1239,21 @@ static int32_t encoder_sample_accum(motor_t* m)
 */
 
 // Commands: [vx_mmps, vy_mmps, wz_radps]
-static void wheel_cmd_cb(const void * msgin)
-{
-  const std_msgs__msg__Float32MultiArray *in =
-      (const std_msgs__msg__Float32MultiArray *)msgin;
+static void wheel_cmd_cb(const void * msgin) {
 
-  size_t n = (in->data.size < 3) ? in->data.size : 3;
-  for (size_t i = 0; i < 3; ++i) {
-    last_cmd[i] = (i < n) ? in->data.data[i] : 0.0f;
+  const std_msgs__msg__Float32MultiArray *m = msgin;
+
+  // Enforce exactly 3 values; ignore partial/empty messages
+  if (m->data.size != 3) {
+    // Optional: record a diagnostic counter here
+    return;
   }
+
+  last_cmd[0] = m->data.data[0];
+  last_cmd[1] = m->data.data[1];
+  last_cmd[2] = m->data.data[2];
+  last_cmd_stamp_ns = now_nanos();
+
 }
 
 // Ramp config: [v_step_mmps, wz_step_radps]
@@ -999,60 +1267,64 @@ static void cfg_cb(const void * msgin)
   ctrlparams_set_steps(vstep, wzstep);
 }
 
-// in timer
-static void timer_cb(rcl_timer_t * t, int64_t)
-{
+// 100 Hz executor timer
+static void timer_cb(rcl_timer_t * t, int64_t) {
   (void)t;
-  Mecanum_Control(last_cmd[0], last_cmd[1], last_cmd[2]);
+
+  /*
+  const uint64_t now = now_nanos();
+  const uint64_t CMD_TIMEOUT_NS = 200ULL * 1000ULL * 1000ULL; // 200 ms
+*/
+
+  float vx = last_cmd[0], vy = last_cmd[1], wz = last_cmd[2];
+
+  /*
+  // If no fresh command, either keep the last non-zero setpoint
+  // or enter a local fallback (your choice):
+  //if (!cmd_is_fresh(now, CMD_TIMEOUT_NS)) {
+     //vx = vy = wz = 0.0f;
+  //}
+   */
+
+  Mecanum_Control(vx, vy, wz);
 
   for (int i = 0; i < 4; ++i) ccr_data[i] = g_ccr_applied[i];
-   (void)rcl_publish(&pub_ccr, &msg_ccr, NULL);
+  (void)rcl_publish(&pub_ccr, &msg_ccr, NULL);
 
-  // if you publish encoders here, keep it
-  // read_encoders(enc_data);
-  // (void)rcl_publish(&pub_encoders, &msg_enc, NULL);
+  //sonar_service_and_publish();
+  publish_motor_currents_and_faults();
+  publish_joint_state_from_encoders();
 }
 
 // ----------------- Nexus Part -----------------
-/*
-void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart) {
-    if (huart->Instance == USART2){
-    	uartTxReady = true;
-	}
-}
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef* hadc)
 {
     if (hadc->Instance == ADC1)
     {
-        //Process_Motor_Currents();
+        Process_Motor_Currents();
     }
 }
 
 void Process_Motor_Currents(void)
 {
-	for (int i = 0; i < NUM_MOTORS; i++) {
+	  for (int i = 0; i < NUM_MOTORS; i++) {
 
-		// Convert ADC count to voltage
 		float vADC = (adcBuffer[i] / ADC_RESOLUTION) * ADC_REF_VOLTAGE;
-
-		// Undo voltage divider
-		float vCS = vADC * VOLTAGE_DIVIDER_GAIN;
-
-		// Convert to sense current through resistor
+		float vCS  = vADC * VOLTAGE_DIVIDER_GAIN;
 		float iSense = vCS / R_SENSE;
-
-		// Convert to actual motor current
 		float iMotor = iSense * K_SENSE;
 
-		// Check for overcurrent
+		g_motor_current_A[i] = iMotor;               // <-- store for ROS timer
 		if (iMotor > STALL_CURRENT) {
-			motorFaultFlags[i] = 1;
-			Emergency_Stop();
+		  motorFaultFlags[i] = 1;
+		  g_motor_fault_flag[i] = 1;                 // mirror for ROS
+		  Emergency_Stop();
 		} else {
-			motorFaultFlags[i] = 0;
+		  motorFaultFlags[i] = 0;
+		  g_motor_fault_flag[i] = 0;
 		}
-	}
+	  }
 }
 
 uint8_t Sonar_Update(void) {
@@ -1085,7 +1357,7 @@ uint8_t Sonar_Update(void) {
     }
     return sonarCurr;
 }
-*/
+
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartDefaultTask */
@@ -1104,11 +1376,6 @@ void StartDefaultTask(void *argument)
 	      true, (void *)&huart2,
 	      cubemx_transport_open, cubemx_transport_close,
 	      cubemx_transport_write, cubemx_transport_read);
-	  /*
-	   Hooks micro-ROS to UART (CubeMX/FreeRTOS).
-
-	   In desktop ROS you never do this—DDS handles transport. micro-ROS needs a tiny XRCE transport to reach the Agent.
-	   */
 
 	  /* -------- allocators -------- */
 	  rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
@@ -1116,117 +1383,154 @@ void StartDefaultTask(void *argument)
 	  freeRTOS_allocator.deallocate    = microros_deallocate;
 	  freeRTOS_allocator.reallocate    = microros_reallocate;
 	  freeRTOS_allocator.zero_allocate = microros_zero_allocate;
-	  rcutils_ret_t rc = rcutils_set_default_allocator(&freeRTOS_allocator);
-	  (void)rc;
-	  /*
-	   Makes all ROS allocations use your RTOS-safe allocator.
+	  rcl_ret_t rc4 =  rcutils_set_default_allocator(&freeRTOS_allocator);
+	  if (rc4 != RCL_RET_OK) { /* Error handle */ }
 
-	   ROS 2 Python analogy: not needed; Python/OS memory is already managed.
-	   */
 	  /* -------- wait for agent (~5 s) -------- */
 	  for (int i = 0; i < 50; ++i) {
 	    if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) break;
 	    osDelay(100);
 	  }
-	  /*
-	   Tries for ~5 s before proceeding so you don’t hard-fail if the Agent isn’t up yet.
-
-	   ROS 2 Python analogy: usually unnecessary; your node just runs and discovers peers later.
-	   */
 
 	  /* -------- micro-ROS graph -------- */
 	  rclc_support_t support;
 	  rcl_allocator_t allocator = rcl_get_default_allocator();
 	  rclc_support_init(&support, 0, NULL, &allocator);
-	  //CHECK();
+
+	  rcl_node_t node_base_controller;
+	  rclc_node_init_default(&node_base_controller, "base_controller", "", &support);
 
 	  rcl_node_t node;
-	  rclc_node_init_default(&node, "nucleo_f446re", "", &support);
-	  //CHECK();
-	  /*
-	    Node creation (name: nucleo_f446re).
+	  rclc_node_init_default(&node, "mpu6050_node", "", &support);
 
-		ROS 2 Python analogy:
-		rclpy.init()
-		node = rclpy.create_node("nucleo_f446re")
-	   */
-
-	  //init_multiarray_4(&msg_cmd_rx,   rx_data);
-
-	  /*
-	   Bind messages to fixed arrays
-	   */
-	  //CHECK();
-	  //init_multiarray_4(&msg_cmd_echo, cmd_data);
-/*
+	  /* -------- publishers -------- */
 	  rclc_publisher_init_default(
-	  	      &pub_cmd_echo, &node,
-	  	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
-	  	      "wheel_status/cmd_echo");
-*/
-	  //CHECK();
-	  //init_multiarray_4(&msg_enc,      enc_data);
-	 /* rclc_publisher_init_default(
-	  	      &pub_encoders, &node,
-	  	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
-	  	      "encoder_wheels");
+	      &pub_imu, &node,
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Imu),
+	      "imu/data_raw");
+
+	  rclc_publisher_init_default(
+	      &pub_temp, &node,
+	      ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Temperature),
+	      "imu/temperature");
+
+	  rcl_publisher_options_t qos_sensor = rcl_publisher_get_default_options();
+	  qos_sensor.qos = rmw_qos_profile_sensor_data;
+
+	  // ---- SONAR publishers (4x range + 4x temp) ----
+	  for (int i=0; i<NUM_SONARS; ++i) {
+	    char topic_rng[32];  snprintf(topic_rng, sizeof(topic_rng), "sonar/%d/range", i+1);
+	    rcl_publisher_init(&pub_sonar_range[i], &node_base_controller,
+	        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Range), topic_rng, &qos_sensor);
+
+	    char topic_tmp[40];  snprintf(topic_tmp, sizeof(topic_tmp), "sonar/%d/temperature", i+1);
+	    rcl_publisher_init(&pub_sonar_temp[i], &node_base_controller,
+	        ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Temperature), topic_tmp, &qos_sensor);
+	  }
+
+	  // Pre-fill constant fields & frame_ids
+	  for (int i=0; i<NUM_SONARS; ++i) {
+	    sensor_msgs__msg__Range *m = &sonar_range_msg[i];
+	    memset(m, 0, sizeof(*m));
+	    m->radiation_type = sensor_msgs__msg__Range__ULTRASOUND;
+	    m->field_of_view  = SONAR_FOV_RAD;
+	    m->min_range      = SONAR_MIN_RANGE_M;
+	    m->max_range      = SONAR_MAX_RANGE_M;
+	    rosidl_runtime_c__String__init(&m->header.frame_id);
+	    char fid[32]; snprintf(fid, sizeof(fid), "sonar_%d_link", i+1);
+	    rosidl_runtime_c__String__assign(&m->header.frame_id, fid);
+
+	    sensor_msgs__msg__Temperature *t = &sonar_temp_msg_[i];
+	    memset(t, 0, sizeof(*t));
+	    rosidl_runtime_c__String__init(&t->header.frame_id);
+	    rosidl_runtime_c__String__assign(&t->header.frame_id, fid);
+	  }
+
+	  // ---- JointState publisher ----
+	  rcl_publisher_init(
+	    &pub_joint, &node_base_controller,
+	    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, JointState),
+	    "joint_states", NULL /*default QoS*/);
+
+	  // JointState sequences (names/position/velocity/effort)
+	  rosidl_runtime_c__String__Sequence__init(&joint_msg.name, NUM_WHEELS);
+	  for (int i=0;i<NUM_WHEELS;++i)
+	    rosidl_runtime_c__String__assign(&joint_msg.name.data[i], WHEEL_NAMES[i]);
+
+	  rosidl_runtime_c__double__Sequence__init(&joint_msg.position, NUM_WHEELS);
+	  rosidl_runtime_c__double__Sequence__init(&joint_msg.velocity, NUM_WHEELS);
+	  rosidl_runtime_c__double__Sequence__init(&joint_msg.effort,   NUM_WHEELS);
+
+	  // ---- Motor currents publishers ----
+	  rcl_publisher_init(&pub_motor_current, &node_base_controller,
+	    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+	    "motors/current_amps", &qos_sensor);
+
+	  rcl_publisher_init(&pub_motor_fault, &node_base_controller,
+	    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
+	    "motors/fault_flags", NULL);
+
+	  // Init fixed-length arrays
+	  rosidl_runtime_c__float__Sequence__init(&motor_currents_msg.data, NUM_MOTORS);
+	  rosidl_runtime_c__int32__Sequence__init(&motor_faults_msg.data, NUM_MOTORS);
+	  /* (your commented publishers remain unchanged)
+	  // rclc_publisher_init_default(&pub_cmd_echo, &node, ...);
+	  // rclc_publisher_init_default(&pub_encoders, &node, ...);
 	  */
-	  /*
-	   Two publishers: /wheel_status/cmd_echo and /wheel_status/encoders.
 
-		ROS 2 Python analogy:
-		pub_enc = node.create_publisher(Int32MultiArray, "wheel_status/encoders", 10)
-	   */
-
-	  //CHECK();
-	  //init_float_multiarray_3(&msg_cmd_rx, rx_data);
+	  /* -------- message buffers you already use -------- */
 	  init_float_multiarray_fixed(&msg_cmd_rx, rx_data, 3);
 
 	  rclc_subscription_init_default(
-	      &sub_cmd, &node,
+	      &sub_cmd, &node_base_controller,
 	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
 	      "twist_nexus");
-	  /*
-	    One subscription to /wheel_cmd.
 
-		ROS 2 Python analogy:
-		sub = node.create_subscription(Int32MultiArray, "wheel_cmd", cb, 10)
-	   */
-
-	  /* 100 Hz timer (new API with autostart) */
-	  //CHECK();
-	  rclc_timer_init_default2(&timer, &support, RCL_MS_TO_NS(10), timer_cb, true);
-	  /*
-	   Timer at 100 Hz (10 ms period), starts automatically.
-	   ROS 2 Python analogy: node.create_timer(0.01, timer_cb).
-	   */
-	  //CHECK();
-	  //rclc_executor_init(&executor, &support.context, 2, &allocator);
 	  init_float_multiarray_fixed(&msg_cfg_rx, cfg_buf, 2);
+
 	  rclc_subscription_init_default(
-	      &sub_cfg, &node,
+	      &sub_cfg, &node_base_controller,
 	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
 	      "nexus_ctrl/config");
-	  //CHECK();
+
 	  init_int_multiarray_4(&msg_ccr, ccr_data);
+
 	  rclc_publisher_init_default(
-	      &pub_ccr, &node,
+	      &pub_ccr, &node_base_controller,
 	      ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Int32MultiArray),
 	      "wheel_status/ccr");
 
-	  rclc_executor_init(&executor, &support.context, /*handles*/ 3, &allocator);
+	  /* -------- fixed frame_id for IMU & temp -------- */
+	  memset(&imu_msg, 0, sizeof(imu_msg));
+	  rosidl_runtime_c__String__init(&imu_msg.header.frame_id);
+	  rosidl_runtime_c__String__assign(&imu_msg.header.frame_id, "imu_link");
+
+	  memset(&temp_msg, 0, sizeof(temp_msg));
+	  rosidl_runtime_c__String__init(&temp_msg.header.frame_id);
+	  rosidl_runtime_c__String__assign(&temp_msg.header.frame_id, "imu_link");
+
+	  /* (optional) try to sync time with Agent */
+	  (void) rmw_uros_sync_session(1000);
+
+	  /* -------- timers -------- */
+	  // Your existing 100 Hz timer
+	  rclc_timer_init_default2(&timer, &support, RCL_MS_TO_NS(10), timer_cb, true);
+
+	  // New 200 Hz IMU timer
+	  //rcl_timer_t timer_imu;
+	  //rclc_timer_init_default2(&timer_imu, &support, RCL_MS_TO_NS(5), imu_timer_cb, true);
+
+	  /* -------- executor (ONE instance) -------- */
+	  rclc_executor_init(&executor, &support.context, /*handles*/ 4, &allocator);
 	  rclc_executor_add_subscription(&executor, &sub_cmd, &msg_cmd_rx, &wheel_cmd_cb, ON_NEW_DATA);
 	  rclc_executor_add_subscription(&executor, &sub_cfg, &msg_cfg_rx, &cfg_cb,     ON_NEW_DATA);
-	  //CHECK();
 	  rclc_executor_add_timer(&executor, &timer);
+	  //rclc_executor_add_timer(&executor, &timer_imu);
+
+	  /* -------- main loop -------- */
 	  for (;;) {
-	    (void)rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
+	    rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
 	  }
-	  /*
-	   The executor is the event loop: it drives your subscription callback and timer.
-	   spin_some() runs for up to 5 ms worth of work each loop, letting your task yield to FreeRTOS.
-	   ROS 2 Python analogy: rclpy.spin(node) (or executor.spin_once() if you need fine control).
-	   */
   /* USER CODE END 5 */
 }
 
@@ -1241,7 +1545,7 @@ void StartDefaultTask(void *argument)
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
-
+/*
 	if (htim->Instance == TIM6) {
 		currCount[0] = __HAL_TIM_GET_COUNTER(&htim4);
 		currCount[1] = __HAL_TIM_GET_COUNTER(&htim1);
@@ -1252,9 +1556,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 		  deltaEncoder[i] = (int16_t)(currCount[i] - pastcurrCount[i]);		// {RL, FL, FR, RR}
 
-		  // Handling 16-bit overflow (if using 16-bit timers)
-		  if (deltaEncoder[i] > 32767)       deltaEncoder[i] -= 65536;
-		  else if (deltaEncoder[i] < -32768) deltaEncoder[i] += 65536;
+		  // Handling 16-bit overflow
+		  if (deltaEncoder[i] > 32767)       deltaEncoder[i] -= 65536;		// underflow
+		  else if (deltaEncoder[i] < -32768) deltaEncoder[i] += 65536;		// overflow
 
 		  // Calculating wheel angular velocities (rad/s)
 		  omega[i] = (int32_t)(deltaEncoder[i] * 2 );  // omega[i] = (deltaEncoder[i] * 2 * PI) / (3072 * 0.001) = deltaEncoder[i] * 2.05
@@ -1262,7 +1566,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		  pastcurrCount[i] = currCount[i];
 	  }
 	}
-
+*/
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM7)
   {
