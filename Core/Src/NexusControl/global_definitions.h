@@ -200,25 +200,32 @@ PID Controller Equation (speed control)
 // ----------------------------------------------------------------------------------
 #define NUM_WHEELS 						 4
 
+#define MILLIMETRE						0
+
+#if MILLIMETRE == 1
+
 #define WHEEL_R              		 	50   	 			// [mm]	wheel_radius
 #define WHEEL_D              		 	100    				// [mm] wheel_diameter
 #define L_HALF               		 	150   				// [mm]	from robot_center to wheel_center in +x axis (forward)
 #define W_HALF               		 	150   				// [mm]	from robot_center to wheel_center in +y axis (left)
 #define A_SUM                		 	300 	 			// [mm]  (L_HALF + W_HALF)
+#define CIRM 				  			314	    			// [mm] circumference of wheel in m = wheel_diameter * PI = 100 mm * 3.14 = 314 [mm]
 
-//#define WHEEL_R_M           		  		0.05f    			// [m]	wheel_radius
-//#define WHEEL_D_M            		 		0.10f    			// [m] 	wheel_diameter
-//#define L_HALF_M             		 		0.150f   			// [m]	from robot_center to wheel_center in +x axis (forward)
-//#define W_HALF_M              			0.150f   			// [m]	from robot_center to wheel_center in +y axis (left)
-//#define A_SUM_M               			0.300f   			// [m]  (L_HALF + W_HALF)
+#else
+
+#define WHEEL_R           		  		0.05f    			// [m]	wheel_radius
+#define WHEEL_D            		 		0.10f    			// [m] 	wheel_diameter
+#define L_HALF             		 		0.150f   			// [m]	from robot_center to wheel_center in +x axis (forward)
+#define W_HALF              			0.150f   			// [m]	from robot_center to wheel_center in +y axis (left)
+#define A_SUM               			0.300f   			// [m]  (L_HALF + W_HALF)
+#define CIRM 				  			0.314f	 		// [m]  circumference of wheel in m = wheel_diameter * PI = 100 mm * 3.14 = 314 [mm]
+
+#endif
 
 #ifndef M_PI
 #define M_PI 				  			3.1416
 #endif
 
-//#define CIRM_M 				  			0.314f	 		// [m]  circumference of wheel in m = wheel_diameter * PI = 100 mm * 3.14 = 314 [mm]
-
-#define CIRM 				  			314	    			// [mm] circumference of wheel in m = wheel_diameter * PI = 100 mm * 3.14 = 314 [mm]
 
 
 // No-Load Values
@@ -277,13 +284,13 @@ PID Controller Equation (speed control)
 #define WZ_RAMPING_STEPS   				0.1f     			// Δw per cycle [rad/s]
 
 // ----------------------------------------------------------------------------------
-// ----------- PID gains and Control loop -------------------------------------------
+// ----------- Encoder specifications -----------------------------------------------
 // ----------------------------------------------------------------------------------
 // Encoders specifications
 #define ENCODER_CPR   					12
 #define GEARBOX_RATIO 					64
 #define DECODING_MODE  					4		 			// (rising and falling edges of channels A and B are counted)
-#define TICKS_PER_REV     		  		3072	 			// ENCODER_CPR * GEARBOX_RATIO * DECODING_MODE = 12 * 64 * 4 = 3072 tick per (WHEEL) revolution
+#define TICKS_PER_REV     		  		3072.0f	 			// ENCODER_CPR * GEARBOX_RATIO * DECODING_MODE = 12 * 64 * 4 = 3072 tick per (WHEEL) revolution
 
 #define RAD_PER_TICK      		 	 	0.0041f  			// (2 * M_PI / (float)TICKS_PER_REV) = ~0.0041f [rad/tick]
 #define DEG_PER_TICK   					0.234f 	 			// (360.0f ° / (float)TICKS_PER_REV) = ~0.234	 [deg/tick]

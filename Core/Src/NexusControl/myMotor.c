@@ -84,12 +84,12 @@ void init_motors(void){
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);	// RR Motor
 
 	// Set RL, FL, FR and RR motors to initial speed. For example 0 PWM = 0 CCR = 0% Duty Cycle => t_on = 0 µs
-	for(int i = 0; i <= 0; i++){
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i);	// RL Motor
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, i);	// FL Motor
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);	// FR Motor
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, i);	// RR Motor
-	  	HAL_Delay(5);
+	for(int i = 0; i <= 300; i++){
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i+200);	// RL Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, i+100);	// FL Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);		// FR Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);		// RR Motor
+	  	HAL_Delay(15);
 	  }
 }
 
