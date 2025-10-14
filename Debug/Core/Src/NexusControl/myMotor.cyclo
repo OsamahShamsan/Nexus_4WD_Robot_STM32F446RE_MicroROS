@@ -1,9 +1,0 @@
-../Core/Src/NexusControl/myMotor.c:12:6:ctrlparams_set_steps	3
-../Core/Src/NexusControl/myMotor.c:25:21:clamp	3
-../Core/Src/NexusControl/myMotor.c:31:21:ramp_step	3
-../Core/Src/NexusControl/myMotor.c:39:20:setMotorDir	3
-../Core/Src/NexusControl/myMotor.c:58:6:init_motors	2
-../Core/Src/NexusControl/myMotor.c:97:6:Mecanum_Control	7
-../Core/Src/NexusControl/myMotor.c:153:6:Emergency_Stop	1
-../Core/Src/NexusControl/myMotor.c:164:6:PID_Init	1
-../Core/Src/NexusControl/myMotor.c:172:7:PID_Compute	3

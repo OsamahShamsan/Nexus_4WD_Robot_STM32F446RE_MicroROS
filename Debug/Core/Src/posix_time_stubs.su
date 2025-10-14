@@ -1,3 +1,1 @@
-../Core/Src/posix_time_stubs.c:22:17:millis_now	8	static
-../Core/Src/posix_time_stubs.c:32:5:_gettimeofday	32	static
-../Core/Src/posix_time_stubs.c:43:5:timespec_get	16	static
+../Core/Src/posix_time_stubs.c:18:5:_gettimeofday	16	static

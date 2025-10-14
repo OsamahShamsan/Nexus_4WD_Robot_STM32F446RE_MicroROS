@@ -33,7 +33,6 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include <stdio.h>
 #include <string.h>
-#include <stdbool.h>
 #include <inttypes.h>
 #include <stdlib.h>
 #include <stdint.h>

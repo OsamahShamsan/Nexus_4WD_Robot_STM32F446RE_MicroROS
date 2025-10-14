@@ -5,6 +5,7 @@
  *      Author: osamah shamsan
  */
 
+
 // posix_time_stubs.c
 #include <time.h>
 #include <sys/time.h>
@@ -13,6 +14,30 @@
 
 #include "FreeRTOS.h"
 #include "task.h"
+
+int _gettimeofday(struct timeval *tv, void *tzvp)
+{
+  (void)tzvp;
+  if (!tv) { errno = EINVAL; return -1; }
+  //uint32_t ms = millis_now();
+  //tv->tv_sec  = ms / 1000U;
+  //tv->tv_usec = (ms % 1000U) * 1000U;
+  return 0;
+}
+
+
+/*
+int _gettimeofday(struct timeval *tv, void *tzvp)
+{
+  (void)tzvp;
+  if (!tv) { errno = EINVAL; return -1; }
+  uint32_t ms = millis_now();
+  tv->tv_sec  = ms / 1000U;
+  tv->tv_usec = (ms % 1000U) * 1000U;
+  return 0;
+}
+
+
 
 // Newlib-nano may not define TIME_UTC; use 1 as per C11
 #ifndef TIME_UTC
@@ -29,16 +54,6 @@ static uint32_t millis_now(void)
   }
 }
 
-int _gettimeofday(struct timeval *tv, void *tzvp)
-{
-  (void)tzvp;
-  if (!tv) { errno = EINVAL; return -1; }
-  uint32_t ms = millis_now();
-  tv->tv_sec  = ms / 1000U;
-  tv->tv_usec = (ms % 1000U) * 1000U;
-  return 0;
-}
-
 
 int timespec_get(struct timespec *ts, int base)
 {
@@ -46,3 +61,5 @@ int timespec_get(struct timespec *ts, int base)
   (void)clock_gettime(0, ts);
   return base;
 }
+
+*/

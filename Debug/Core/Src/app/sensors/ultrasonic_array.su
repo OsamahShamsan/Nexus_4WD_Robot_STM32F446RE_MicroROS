@@ -1,0 +1,7 @@
+../Core/Src/app/sensors/ultrasonic_array.c:6:13:RS485_SetTX	8	static
+../Core/Src/app/sensors/ultrasonic_array.c:7:13:RS485_SetRX	8	static
+../Core/Src/app/sensors/ultrasonic_array.c:9:16:calcChecksum	24	static
+../Core/Src/app/sensors/ultrasonic_array.c:15:6:SONAR_Init	24	static
+../Core/Src/app/sensors/ultrasonic_array.c:23:9:SONAR_Trigger	24	static
+../Core/Src/app/sensors/ultrasonic_array.c:35:9:SONAR_ReadDistance	32	static
+../Core/Src/app/sensors/ultrasonic_array.c:57:9:SONAR_ReadTemperature	32	static

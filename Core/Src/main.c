@@ -1,15 +1,136 @@
+// ============================================================================
+// STEP 1: Includes
+// ----------------------------------------------------------------------------
+//   Organised from hardware → middleware → user layer.
+// 	 Shows what each header provides and which symbols (structs / functions) live in it.
+//   	[1.1] MCU / RTOS base headers
+//   	[1.2] micro-ROS core runtime
+//   	[1.3] Common ROS2 message definitions
+//   	[1.4] Optional utilities and user modules
+// ============================================================================
 
-#include "main.h"
-#include "cmsis_os.h"
 
+/*
+// [1.1] MCU / RTOS Layer ------------------------------------------------------
+
+// These headers come from CubeMX and CMSIS.
+// Provide HAL peripherals and RTOS primitives (threads, delays, queues, etc.).
+*/
+#include "main.h"          // HAL handles (TIM_HandleTypeDef, GPIO_TypeDef, etc.)
+#include "cmsis_os.h"      // osThread*, osDelay, semaphore and FreeRTOS wrappers
+
+/*
+// [1.2] micro-ROS Core Runtime -----------------------------------------------
+
+// Core client libraries providing the embedded ROS2 interface.
+
+// --- <rclc/rclc.h> -----------------------------------------------------------
+// High-level C API wrapping the low-level rcl layer.
+// Defines rcl_node_t, rcl_allocator_t, rclc_support_t, rclc_init(), rclc_node_init_default().
+// Also exposes rclc_publisher_init_default(), rclc_subscription_init_default().
+// headers included within are:
+// #include <rcl/time.h>             // rcl_time_point_t, rcl_duration_t
+// #include <rclc/timer.h>           // rcl_timer_t, rclc_timer_init_default()
+// #include <rclc/publisher.h>       // rcl_publisher_t helpers (explicit include)
+// #include <rclc/subscription.h>    // rcl_subscription_t helpers
+*/
 #include <rclc/rclc.h>
+
+/*
+// --- <rclc/executor.h> -------------------------------------------------------
+
+// Scheduler that runs callbacks and timers.
+// Provides rclc_executor_t, rclc_executor_init(), rclc_executor_spin_some().
+// Links topics to user callbacks with rclc_executor_add_subscription() / add_timer().
+*/
 #include <rclc/executor.h>
 
+/*
+// --- <rmw_microros/rmw_microros.h> ------------------------------------------
+
+// Transport interface for UART, UDP, CAN, SPI.
+// Contains rmw_uros_set_custom_transport(), rmw_uros_ping_agent().
+// Handles serialization and DDS communication toward micro-ROS Agent.
+*/
 #include <rmw_microros/rmw_microros.h>
-#include "rosidl_runtime_c/string_functions.h"
+
+/*
+// --- <rosidl_runtime_c/string_functions.h> -----------------------------------
+
+// String memory management used by all ROS messages.
+// Defines rosidl_runtime_c__String struct and helpers: _assign(), _init(), _fini().
+*/
+#include <rosidl_runtime_c/string_functions.h>
+
+/*
+// Optional: low-level or debugging
+
+// #include <rcl/rcl.h>                // Only if you need fine-grained control
+// #include <rcl/error_handling.h>     // Optional, for printing errors
+*/
+
+
+/*
+// [1.3] Message Definitions ----------------------------------------------------
+
+// ROS2 message definitions generated from .msg files by rosidl_generator_c.
+// Each header defines a C struct and its _init(), _fini(), and *_TypeSupport functions.
+
+// --- <geometry_msgs/msg/twist.h> ---------------------------------------------
+// struct geometry_msgs__msg__Twist { Vector3 linear; Vector3 angular; }
+// Used for velocity commands (/cmd_vel, /twist_nexus).
+*/
+#include <geometry_msgs/msg/twist.h>
+
+/*
+// --- <nav_msgs/msg/odometry.h> -----------------------------------------------
+
+// struct nav_msgs__msg__Odometry { Header header; PoseWithCovariance pose; TwistWithCovariance twist; }
+// Typically used for odometry publishers.
+*/
 #include <nav_msgs/msg/odometry.h>
 
-#include "global_definitions.h"
+/*
+// Optional future message types:
+
+// --- IMU ---
+//#include <sensor_msgs/msg/imu.h>           // orientation, angular velocity, accel
+//#include <geometry_msgs/msg/vector3.h>     // used inside IMU for linear/angular
+//#include <geometry_msgs/msg/quaternion.h>  // orientation quaternion
+//#include <std_msgs/msg/header.h>           // timestamp + frame_id shared by all msgs
+
+// --- Ultrasonic distance + temperature ---
+//#include <sensor_msgs/msg/range.h>         // ultrasonic distance (m)
+//#include <sensor_msgs/msg/temperature.h>   // ambient/sensor temperature (°C)
+
+// #include <sensor_msgs/msg/magnetic_field.h>  // magnetometer data
+// #include <std_msgs/msg/float32.h>            // scalar telemetry (battery voltage)
+// #include <std_msgs/msg/bool.h>               // enable/stop flags
+// #include <diagnostic_msgs/msg/key_value.h>   // system diagnostics
+// #include <sensor_msgs/msg/joint_state.h>     // wheel encoder states (if needed)
+
+*/
+
+/*
+// [1.4] User-Space Modules  ---------------------------------------------------
+
+// User-developed components — hardware interfaces and control logic.
+// These files should *never* include rcl* or rmw* headers.
+// They implement the real robot behaviour and will grow with the system.
+*/
+#include "robot_params.h"			// wheel geometry, PID constants, topic settings
+#include "motor_driver.h"			// PWM, direction control, Mecanum_Control()
+#include "imu_interface.h"			// I2C/SPI IMU readout and filtering
+#include "ultrasonic_array.h"		// trigger/echo handling for multiple sensors
+#include "odom_handler.h"			// encoder integration, pose update
+
+
+/* --------------------------------------------------------------------------------------
+ * END OF STEP 1
+ * --------------------------------------------------------------------------------------
+ *  - This block rarely changes except when adding new sensors or message types.
+ * --------------------------------------------------------------------------------------
+ */
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
@@ -30,16 +151,68 @@ const osThreadAttr_t defaultTask_attributes = {
   .priority = (osPriority_t) osPriorityNormal,
 };
 
-rclc_executor_t executor;
 
-rcl_publisher_t odom_pub;
-nav_msgs__msg__Odometry odom_msg;
-float x = 0.0f, y = 0.0f, theta = 0.0f;
+/* ======================================================================================
+ * STEP 2 — micro-ROS Core Objects and Initialization
+ * ======================================================================================
+ *
+ * This section defines the fundamental structures that every micro-ROS node running
+ * on STM32 + FreeRTOS must have. These handle:
+ *   - memory allocation,
+ *   - node creation,
+ *   - executor callback scheduling,
+ *   - and topic publishing/subscription.
+ *
+ * Most of these are one-time system-wide objects — they exist only once per MCU.
+ * Only publishers/subscribers/timers are created per topic or per feature module.
+ *
+ * ======================================================================================
+ */
+
+/* --------------------------------------------------------------------------------------
+ * Core micro-ROS handles — initialized once in the application.
+ * --------------------------------------------------------------------------------------
+ */
+rcl_allocator_t allocator;   // Provides memory management functions to the ROS client
+                             // Usually obtained via rcl_get_default_allocator()
+
+rclc_support_t support;      // Aggregates allocator + init options + communication support
+                             // Initialized via rclc_support_init()
+
+rcl_node_t node;             // Represents the MCU node in the ROS graph
+                             // Created once with rclc_node_init_default(&node, "node_name", "", &support)
+
+rclc_executor_t executor;    // Task scheduler running all callbacks (timers, subscriptions, etc.)
+                             // Created once via rclc_executor_init()
+
+/* --------------------------------------------------------------------------------------
+ * Example topic handles — each topic has its own publisher or subscriber.
+ * --------------------------------------------------------------------------------------
+ */
+
+extern rcl_subscription_t twist_sub;     // Subscription object → listens to /twist_nexus topic
+extern geometry_msgs__msg__Twist twist_msg;  // Struct holding the received Twist message data
+
+extern rcl_publisher_t odom_pub;         // Publisher object → publishes /odom topic
+extern nav_msgs__msg__Odometry odom_msg; // Struct holding odometry data to send back to ROS2
+
+
+/* --------------------------------------------------------------------------------------
+ * END OF STEP 2
+ * --------------------------------------------------------------------------------------
+ *  - allocator, support, node, and executor → created once in app initialization.
+ *  - publishers, subscribers, timers → one per topic or feature (can be multiple).
+ *  - message structs (like twist_msg, odom_msg) → user-owned, reused between callbacks.
+ *
+ * Keep global to avoid stack use and allow cross-module access (e.g., odometry, control).
+ * --------------------------------------------------------------------------------------
+ */
+
 
 volatile int16_t deltaEncoder[4] = {0};		// {RL, FL, FR, RR}
 volatile int16_t currCount[4] = {0};		// {RL, FL, FR, RR}
 volatile int16_t pastCount[4] = {0};		// {RL, FL, FR, RR}
-volatile uint8_t encUpdateFlag = 0;
+volatile bool encUpdateFlag = 0;
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -62,9 +235,12 @@ void microros_deallocate(void * pointer, void * state);
 void * microros_reallocate(void * pointer, size_t size, void * state);
 void * microros_zero_allocate(size_t number_of_elements, size_t size_of_element, void * state);
 
-void compute_and_publish_odometry(void);
+void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time);
 
 void nexus_bringup(void);
+
+
+
 
 void nexus_bringup(void){
     HAL_TIM_Base_Start_IT(&htim6);
@@ -74,7 +250,10 @@ void nexus_bringup(void){
 	HAL_TIM_Encoder_Start(&htim4, TIM_CHANNEL_ALL);
 	HAL_TIM_Encoder_Start(&htim8, TIM_CHANNEL_ALL);
 
+	init_motors();
+
 }
+
 
 int main(void)
 {
@@ -88,9 +267,6 @@ int main(void)
   MX_TIM8_Init();
   MX_USART2_UART_Init();
   MX_TIM6_Init();
-
-  nexus_bringup();
-  HAL_Delay(2000);
 
   osKernelInitialize();
 
@@ -383,7 +559,6 @@ static void MX_GPIO_Init(void)
 
 }
 
-
 void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
 {
   (void)last_call_time;
@@ -391,73 +566,15 @@ void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
   compute_and_publish_odometry();
 }
 
-void compute_and_publish_odometry(void)
-{
-    if (!encUpdateFlag) return;
-    encUpdateFlag = 0;
-
-    int16_t localDelta[NUM_WHEELS];
-    for (int i = 0; i < NUM_WHEELS; i++)
-        localDelta[i] = deltaEncoder[i];
-
-    const float DT = 0.001f;
-    float w[NUM_WHEELS];
-    for (int i = 0; i < NUM_WHEELS; i++)
-        w[i] = localDelta[i] * RAD_PER_TICK / DT;
-
-    float vx = (WHEEL_R / 4.0f) * (w[1] + w[2] + w[0] + w[3]);
-    float vy = (WHEEL_R / 4.0f) * (-w[1] + w[2] + w[0] - w[3]);
-    float wz = (WHEEL_R / 4.0f) * ((-w[1] + w[2] - w[0] + w[3]) / A_SUM);
-
-    static float acc_vx = 0, acc_vy = 0, acc_wz = 0;
-    static uint8_t count = 0;
-
-    acc_vx += vx;
-    acc_vy += vy;
-    acc_wz += wz;
-    count++;
-
-    if (count >= 10)  {
-
-        vx = acc_vx / count;
-        vy = acc_vy / count;
-        wz = acc_wz / count;
-        acc_vx = acc_vy = acc_wz = 0;
-        count = 0;
-
-        float dt_publish = 0.010f;
-        float dx = (vx * cosf(theta) - vy * sinf(theta)) * dt_publish;
-        float dy = (vx * sinf(theta) + vy * cosf(theta)) * dt_publish;
-        float dtheta = wz * dt_publish;
-
-        x += dx;
-        y += dy;
-        theta += dtheta;
-
-        if (theta > M_PI)  theta -= 2.0f * M_PI;
-        if (theta < -M_PI) theta += 2.0f * M_PI;
-
-        odom_msg.pose.pose.position.x = x;
-        odom_msg.pose.pose.position.y = y;
-        odom_msg.pose.pose.orientation.z = sinf(theta / 2.0f);
-        odom_msg.pose.pose.orientation.w = cosf(theta / 2.0f);
-
-        odom_msg.twist.twist.linear.x = vx;
-        odom_msg.twist.twist.linear.y = vy;
-        odom_msg.twist.twist.angular.z = wz;
-
-        uint64_t now_ns = rmw_uros_epoch_nanos();
-        odom_msg.header.stamp.sec = (int32_t)(now_ns / 1000000000ULL);
-        odom_msg.header.stamp.nanosec = (uint32_t)(now_ns % 1000000000ULL);
-
-        rcl_ret_t rc1 = rcl_publish(&odom_pub, &odom_msg, NULL);
-        if (rc1 != RCL_RET_OK){	}
-    }
-}
 
 
 void StartDefaultTask(void *argument)
 {
+
+	  nexus_bringup();
+	  for (int i = 0; i < 20; ++i) {
+	  	    osDelay(100);
+	  }
 
 	  rmw_uros_set_custom_transport(
 	      true, (void *)&huart2,
@@ -477,8 +594,7 @@ void StartDefaultTask(void *argument)
 	    osDelay(100);
 	  }
 
-	  rclc_support_t support;
-	  rcl_allocator_t allocator = rcl_get_default_allocator();
+	  allocator = rcl_get_default_allocator();
 	  rclc_support_init(&support, 0, NULL, &allocator);
 
 	  rcl_node_t node_base_controller;
