@@ -27,25 +27,25 @@ Idx Name          Size      VMA       LMA       File off  Algn
                   ALLOC
  11 .ARM.attributes 00000030  00000000  00000000  0001f300  2**0
                   CONTENTS, READONLY
- 12 .debug_info   0001e25e  00000000  00000000  0001f330  2**0
+ 12 .debug_info   0001e26a  00000000  00000000  0001f330  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 13 .debug_abbrev 00004492  00000000  00000000  0003d58e  2**0
+ 13 .debug_abbrev 000044a5  00000000  00000000  0003d59a  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 14 .debug_aranges 00001818  00000000  00000000  00041a20  2**3
+ 14 .debug_aranges 00001818  00000000  00000000  00041a40  2**3
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 15 .debug_rnglists 0000129c  00000000  00000000  00043238  2**0
+ 15 .debug_rnglists 0000129c  00000000  00000000  00043258  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 16 .debug_macro  0002a33c  00000000  00000000  000444d4  2**0
+ 16 .debug_macro  0002a33c  00000000  00000000  000444f4  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 17 .debug_line   000227b6  00000000  00000000  0006e810  2**0
+ 17 .debug_line   000227c2  00000000  00000000  0006e830  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 18 .debug_str    000fca10  00000000  00000000  00090fc6  2**0
+ 18 .debug_str    000fca10  00000000  00000000  00090ff2  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 19 .comment      00000069  00000000  00000000  0018d9d6  2**0
+ 19 .comment      00000069  00000000  00000000  0018da02  2**0
                   CONTENTS, READONLY
- 20 .debug_frame  00007570  00000000  00000000  0018da40  2**2
+ 20 .debug_frame  00007570  00000000  00000000  0018da6c  2**2
                   CONTENTS, READONLY, DEBUGGING, OCTETS
- 21 .debug_line_str 00000071  00000000  00000000  00194fb0  2**0
+ 21 .debug_line_str 00000071  00000000  00000000  00194fdc  2**0
                   CONTENTS, READONLY, DEBUGGING, OCTETS
 
 Disassembly of section .text:
@@ -3731,7 +3731,10 @@ static void MX_GPIO_Init(void)
  8001df4:	40020000 	.word	0x40020000
 
 08001df8 <odom_timer_cb>:
-
+ * Keeps callbacks lightweight — avoids blocking the micro-ROS executor.
+ *
+ * --------------------------------------------------------------------------------------
+ */
 void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
 {
  8001df8:	b580      	push	{r7, lr}
@@ -3739,15 +3742,18 @@ void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
  8001dfc:	af00      	add	r7, sp, #0
  8001dfe:	60f8      	str	r0, [r7, #12]
  8001e00:	e9c7 2300 	strd	r2, r3, [r7]
-  (void)last_call_time;
-  if (timer == NULL) return;
+    (void) last_call_time;      // Prevent unused variable warning
+
+    if (timer == NULL)
  8001e04:	68fb      	ldr	r3, [r7, #12]
  8001e06:	2b00      	cmp	r3, #0
  8001e08:	d002      	beq.n	8001e10 <odom_timer_cb+0x18>
-  compute_and_publish_odometry();
+        return;                 // Safety check: avoid null pointer crash
+
+    compute_and_publish_odometry();   // Run the actual odometry computation (user code)
  8001e0a:	f7fe ff69 	bl	8000ce0 <compute_and_publish_odometry>
  8001e0e:	e000      	b.n	8001e12 <odom_timer_cb+0x1a>
-  if (timer == NULL) return;
+        return;                 // Safety check: avoid null pointer crash
  8001e10:	bf00      	nop
 }
  8001e12:	3710      	adds	r7, #16
@@ -3755,23 +3761,28 @@ void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
  8001e16:	bd80      	pop	{r7, pc}
 
 08001e18 <StartDefaultTask>:
-
-
-
+ *   7️-  Enter the main executor spin loop (runs forever)
+ *
+ * ======================================================================================
+ */
 void StartDefaultTask(void *argument)
 {
  8001e18:	b5b0      	push	{r4, r5, r7, lr}
  8001e1a:	b096      	sub	sp, #88	@ 0x58
  8001e1c:	af02      	add	r7, sp, #8
  8001e1e:	61f8      	str	r0, [r7, #28]
-
-	  nexus_bringup();
+	  * 1️- Hardware bring-up (user-specific)
+	  * -------------------------------------------------------------------------
+	  *  Initialize peripherals, motor controllers, encoders, and sensors.
+	  *  This part is specific to the robot platform.
+	  */
+	  nexus_bringup();  // Custom board-level init
  8001e20:	f7ff fca4 	bl	800176c <nexus_bringup>
 	  for (int i = 0; i < 20; ++i) {
  8001e24:	2300      	movs	r3, #0
  8001e26:	64fb      	str	r3, [r7, #76]	@ 0x4c
  8001e28:	e005      	b.n	8001e36 <StartDefaultTask+0x1e>
-	  	    osDelay(100);
+	        osDelay(100); // short delay to let peripherals stabilize
  8001e2a:	2064      	movs	r0, #100	@ 0x64
  8001e2c:	f004 fd92 	bl	8006954 <osDelay>
 	  for (int i = 0; i < 20; ++i) {
@@ -3781,8 +3792,11 @@ void StartDefaultTask(void *argument)
  8001e36:	6cfb      	ldr	r3, [r7, #76]	@ 0x4c
  8001e38:	2b13      	cmp	r3, #19
  8001e3a:	ddf6      	ble.n	8001e2a <StartDefaultTask+0x12>
-	  }
-
+	 *  This binds micro-ROS to a communication channel (here UART2).
+	 *  The transport functions were defined earlier in transport_cubemx.c.
+	 *
+	 *    Change &huart2 to &huartX if you use another UART.
+	 */
 	  rmw_uros_set_custom_transport(
  8001e3c:	4b44      	ldr	r3, [pc, #272]	@ (8001f50 <StartDefaultTask+0x138>)
  8001e3e:	9301      	str	r3, [sp, #4]
@@ -3793,10 +3807,11 @@ void StartDefaultTask(void *argument)
  8001e48:	4945      	ldr	r1, [pc, #276]	@ (8001f60 <StartDefaultTask+0x148>)
  8001e4a:	2001      	movs	r0, #1
  8001e4c:	f008 fbd4 	bl	800a5f8 <rmw_uros_set_custom_transport>
-	      true, (void *)&huart2,
-	      cubemx_transport_open, cubemx_transport_close,
-	      cubemx_transport_write, cubemx_transport_read);
-
+	  * 3- Set up FreeRTOS-safe memory allocator
+	  * -------------------------------------------------------------------------
+	  *  Replaces default malloc/free with thread-safe versions
+	  *  that use FreeRTOS heap functions or user static pool.
+	  */
 	  rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
  8001e50:	f107 032c 	add.w	r3, r7, #44	@ 0x2c
  8001e54:	4618      	mov	r0, r3
@@ -3819,8 +3834,11 @@ void StartDefaultTask(void *argument)
  8001e70:	f008 fb04 	bl	800a47c <rcutils_set_default_allocator>
  8001e74:	4603      	mov	r3, r0
  8001e76:	647b      	str	r3, [r7, #68]	@ 0x44
-	  if (rc1 != RCL_RET_OK) { /* Error handle */ }
-
+	  * -------------------------------------------------------------------------
+	  *  micro-ROS communicates over XRCE-DDS; the Agent must be running
+	  *  on the PC (typically `ros2 run micro_ros_agent micro_ros_agent serial ...`)
+	  *  before this ping succeeds.
+	  */
 	  for (int i = 0; i < 50; ++i) {
  8001e78:	2300      	movs	r3, #0
  8001e7a:	64bb      	str	r3, [r7, #72]	@ 0x48
@@ -3845,9 +3863,12 @@ void StartDefaultTask(void *argument)
  8001e9e:	e000      	b.n	8001ea2 <StartDefaultTask+0x8a>
 	    if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) break;
  8001ea0:	bf00      	nop
-	  }
-
-	  allocator = rcl_get_default_allocator();
+	 /* -------------------------------------------------------------------------
+	  * 5️- Create support context and node
+	  * -------------------------------------------------------------------------
+	  *  These are the core micro-ROS entities for the MCU.
+	  */
+	  allocator = rcl_get_default_allocator();			 // Retrieve active allocator
  8001ea2:	4c34      	ldr	r4, [pc, #208]	@ (8001f74 <StartDefaultTask+0x15c>)
  8001ea4:	463b      	mov	r3, r7
  8001ea6:	4618      	mov	r0, r3
@@ -3858,14 +3879,14 @@ void StartDefaultTask(void *argument)
  8001eb2:	c50f      	stmia	r5!, {r0, r1, r2, r3}
  8001eb4:	6823      	ldr	r3, [r4, #0]
  8001eb6:	602b      	str	r3, [r5, #0]
-	  rclc_support_init(&support, 0, NULL, &allocator);
+	  rclc_support_init(&support, 0, NULL, &allocator);	 // Init context with default args
  8001eb8:	4b2e      	ldr	r3, [pc, #184]	@ (8001f74 <StartDefaultTask+0x15c>)
  8001eba:	2200      	movs	r2, #0
  8001ebc:	2100      	movs	r1, #0
  8001ebe:	482e      	ldr	r0, [pc, #184]	@ (8001f78 <StartDefaultTask+0x160>)
  8001ec0:	f008 f9cc 	bl	800a25c <rclc_support_init>
 
-	  rcl_node_t node_base_controller;
+	  rcl_node_t node_base_controller;					 // This MCU node
 	  rclc_node_init_default(&node_base_controller, "base_controller", "", &support);
  8001ec4:	f107 0024 	add.w	r0, r7, #36	@ 0x24
  8001ec8:	4b2b      	ldr	r3, [pc, #172]	@ (8001f78 <StartDefaultTask+0x160>)
@@ -3874,10 +3895,14 @@ void StartDefaultTask(void *argument)
  8001ece:	f008 fa0f 	bl	800a2f0 <rclc_node_init_default>
 
 
-	  (void) rmw_uros_sync_session(1000);
+	  (void) rmw_uros_sync_session(1000);				// Synchronize session timing
  8001ed2:	f44f 707a 	mov.w	r0, #1000	@ 0x3e8
  8001ed6:	f008 fdb5 	bl	800aa44 <rmw_uros_sync_session>
-
+	  * 6️- Initialize the Odometry Publisher
+	  * -------------------------------------------------------------------------
+	  *  Publishes to the `/odom` topic using the standard nav_msgs/Odometry type.
+	  *  The message header and frame ID are prepared once and reused.
+	  */
 	  rcl_ret_t rc7 = rclc_publisher_init_default(
  8001eda:	f007 fa05 	bl	80092e8 <rosidl_typesupport_c__get_message_type_support_handle__nav_msgs__msg__Odometry>
  8001ede:	4602      	mov	r2, r0
@@ -3886,11 +3911,11 @@ void StartDefaultTask(void *argument)
  8001ee6:	4828      	ldr	r0, [pc, #160]	@ (8001f88 <StartDefaultTask+0x170>)
  8001ee8:	f008 fa3e 	bl	800a368 <rclc_publisher_init_default>
  8001eec:	6438      	str	r0, [r7, #64]	@ 0x40
-	      &odom_pub,
-	      &node_base_controller,
-	      ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
 	      "odom");
-	  if (rc7 != RCL_RET_OK) {   }
+	  if (rc7 != RCL_RET_OK) {
+	          // Handle publisher init error
+	  }
+
 	  rosidl_runtime_c__String__init(&odom_msg.header.frame_id);
  8001eee:	4827      	ldr	r0, [pc, #156]	@ (8001f8c <StartDefaultTask+0x174>)
  8001ef0:	f009 f938 	bl	800b164 <rosidl_runtime_c__String__init>
@@ -3906,7 +3931,11 @@ void StartDefaultTask(void *argument)
  8001f02:	4b23      	ldr	r3, [pc, #140]	@ (8001f90 <StartDefaultTask+0x178>)
  8001f04:	2200      	movs	r2, #0
  8001f06:	605a      	str	r2, [r3, #4]
-
+	  * 7️- Initialize the Executor and Timer
+	  * -------------------------------------------------------------------------
+	  *  The executor manages all callbacks (timers, subscriptions, etc.).
+	  *  Each timer is a periodic callback. Here, we set up odometry @ 100 Hz.
+	  */
 	  rclc_executor_init(&executor, &support.context, 4, &allocator);
  8001f08:	4b1a      	ldr	r3, [pc, #104]	@ (8001f74 <StartDefaultTask+0x15c>)
  8001f0a:	2204      	movs	r2, #4
@@ -3915,7 +3944,7 @@ void StartDefaultTask(void *argument)
  8001f10:	f007 ff5e 	bl	8009dd0 <rclc_executor_init>
 
 	  rcl_timer_t timer_odom;
-	  rclc_timer_init_default2(&timer_odom, &support, RCL_MS_TO_NS(10), odom_timer_cb, true);
+	  rclc_timer_init_default2(
  8001f14:	f107 0020 	add.w	r0, r7, #32
  8001f18:	2301      	movs	r3, #1
  8001f1a:	9301      	str	r3, [sp, #4]
@@ -3925,14 +3954,19 @@ void StartDefaultTask(void *argument)
  8001f22:	f04f 0300 	mov.w	r3, #0
  8001f26:	4914      	ldr	r1, [pc, #80]	@ (8001f78 <StartDefaultTask+0x160>)
  8001f28:	f008 fa52 	bl	800a3d0 <rclc_timer_init_default2>
+			  &timer_odom, &support, RCL_MS_TO_NS(10),			// period = 10 ms
+			  odom_timer_cb, true);	 							// true = autostart
 	  rclc_executor_add_timer(&executor, &timer_odom);
  8001f2c:	f107 0320 	add.w	r3, r7, #32
  8001f30:	4619      	mov	r1, r3
  8001f32:	4818      	ldr	r0, [pc, #96]	@ (8001f94 <StartDefaultTask+0x17c>)
  8001f34:	f007 ffb8 	bl	8009ea8 <rclc_executor_add_timer>
-
+	  * -------------------------------------------------------------------------
+	  *  Non-blocking spin_some() allows other RTOS tasks to run concurrently.
+	  *  You can replace with rclc_executor_spin() for blocking loop.
+	  */
 	  for (;;) {
-	    rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
+	    rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));	// check callbacks every 5 ms
  8001f38:	a303      	add	r3, pc, #12	@ (adr r3, 8001f48 <StartDefaultTask+0x130>)
  8001f3a:	e9d3 2300 	ldrd	r2, r3, [r3]
  8001f3e:	4815      	ldr	r0, [pc, #84]	@ (8001f94 <StartDefaultTask+0x17c>)

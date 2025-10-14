@@ -209,10 +209,7 @@ extern nav_msgs__msg__Odometry odom_msg; // Struct holding odometry data to send
  */
 
 
-volatile int16_t deltaEncoder[4] = {0};		// {RL, FL, FR, RR}
-volatile int16_t currCount[4] = {0};		// {RL, FL, FR, RR}
-volatile int16_t pastCount[4] = {0};		// {RL, FL, FR, RR}
-volatile bool encUpdateFlag = 0;
+
 
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
@@ -226,16 +223,70 @@ static void MX_TIM6_Init(void);
 
 void StartDefaultTask(void *argument);
 
-bool cubemx_transport_open(struct uxrCustomTransport * transport);
-bool cubemx_transport_close(struct uxrCustomTransport * transport);
-size_t cubemx_transport_write(struct uxrCustomTransport* transport, const uint8_t * buf, size_t len, uint8_t * err);
-size_t cubemx_transport_read(struct uxrCustomTransport* transport, uint8_t* buf, size_t len, int timeout, uint8_t* err);
-void * microros_allocate(size_t size, void * state);
-void microros_deallocate(void * pointer, void * state);
-void * microros_reallocate(void * pointer, size_t size, void * state);
-void * microros_zero_allocate(size_t number_of_elements, size_t size_of_element, void * state);
+/* ======================================================================================
+ * STEP 3 — micro-ROS Communication and Memory Interfaces
+ * ======================================================================================
+ *
+ * This step defines all the low-level interfaces that allow the microcontroller to:
+ *   1️- communicate with the ROS 2 agent on the host PC,
+ *   2️- manage dynamic memory safely on an RTOS.
+ *
+ * These are *system-level hooks* — used by the micro-ROS middleware itself,
+ * not directly by the user control logic. Usually they are implemented or provided once.
+ *
+ * --------------------------------------------------------------------------------------
+ *  Communication Layer (transport) — used internally by Micro XRCE-DDS
+ * --------------------------------------------------------------------------------------
+ *  These functions implement the physical link between the MCU and the ROS 2 agent.
+ *  Typical transports: UART, USB CDC, CAN, UDP, etc.
+ *
+ *  - They are called by the micro-ROS stack (not by user code).
+ *  - You implement them once in your project, usually in transport .c
+ *
+ * --------------------------------------------------------------------------------------
+ *  Memory Layer — used internally by rcl/rmw for allocation.
+ * --------------------------------------------------------------------------------------
+ *  micro-ROS allows replacing malloc/free with user-provided memory functions
+ *  (to integrate with FreeRTOS heap or custom memory pools).
+ *
+ * --------------------------------------------------------------------------------------
+ */
 
-void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time);
+
+bool cubemx_transport_open(struct uxrCustomTransport * transport);             // Initialize UART/USB/UDP port
+bool cubemx_transport_close(struct uxrCustomTransport * transport);            // Close or power down link
+size_t cubemx_transport_write(struct uxrCustomTransport* transport,            // Send raw bytes to agent
+                              const uint8_t * buf, size_t len, uint8_t * err);
+size_t cubemx_transport_read(struct uxrCustomTransport* transport,             // Read bytes from agent (blocking or timeout)
+                             uint8_t* buf, size_t len, int timeout, uint8_t* err);
+
+/* --------------------------------------------------------------------------------------
+ *  Memory allocation hooks (optional overrides)
+ * --------------------------------------------------------------------------------------
+ *  The micro-ROS allocator will call these instead of malloc/free if configured.
+ *  They must be thread-safe under FreeRTOS.
+ * --------------------------------------------------------------------------------------
+ */
+void * microros_allocate(size_t size, void * state);                            // Allocates 'size' bytes
+void microros_deallocate(void * pointer, void * state);                         // Frees memory
+void * microros_reallocate(void * pointer, size_t size, void * state);          // Resize allocation
+void * microros_zero_allocate(size_t n, size_t size_of_elem, void * state);     // Allocates and zeros array
+
+/* --------------------------------------------------------------------------------------
+ *  User callback prototypes
+ * --------------------------------------------------------------------------------------
+ *  These are custom functions the user provides for the robot’s logic.
+ *  Here we declare odometry and control callbacks used in later steps.
+ * --------------------------------------------------------------------------------------
+ */
+void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time);	 // Timer callback to compute and publish odometry
+
+
+
+volatile int16_t deltaEncoder[4] = {0};		// {RL, FL, FR, RR}
+volatile int16_t currCount[4] = {0};		// {RL, FL, FR, RR}
+volatile int16_t pastCount[4] = {0};		// {RL, FL, FR, RR}
+volatile bool encUpdateFlag = 0;
 
 void nexus_bringup(void);
 
@@ -559,70 +610,158 @@ static void MX_GPIO_Init(void)
 
 }
 
+/* ======================================================================================
+ * STEP 4 — Timer Callback for Odometry Computation
+ * ======================================================================================
+ *
+ * Called automatically by the rclc_executor at a fixed interval (10 ms in this case).
+ * This callback does not compute odometry directly — it only triggers the processing
+ * function `compute_and_publish_odometry()` defined in odom_handler.c.
+ *
+ * Keeps callbacks lightweight — avoids blocking the micro-ROS executor.
+ *
+ * --------------------------------------------------------------------------------------
+ */
 void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
 {
-  (void)last_call_time;
-  if (timer == NULL) return;
-  compute_and_publish_odometry();
+    (void) last_call_time;      // Prevent unused variable warning
+
+    if (timer == NULL)
+        return;                 // Safety check: avoid null pointer crash
+
+    compute_and_publish_odometry();   // Run the actual odometry computation (user code)
 }
 
 
-
+/* ======================================================================================
+ * STEP 5 — micro-ROS Bring-up and Node Initialization
+ * ======================================================================================
+ *
+ *  This is the main entry point that runs once the RTOS scheduler starts (FreeRTOS task).
+ *  It performs the full initialization of the micro-ROS node running on the STM32 board.
+ *
+ *  Summary of what happens here:
+ *   1️-  Hardware bring-up (sensors, drivers, encoders, etc.)
+ *   2️-  Configure transport (UART/USB/CAN) for the micro-ROS Agent
+ *   3️-  Register custom FreeRTOS-safe allocator functions
+ *   4️-  Ping the ROS 2 Agent to ensure communication
+ *   5️-  Initialize the micro-ROS support, node, and publishers
+ *   6️-  Create the timer and executor loop for periodic callbacks
+ *   7️-  Enter the main executor spin loop (runs forever)
+ *
+ * ======================================================================================
+ */
 void StartDefaultTask(void *argument)
 {
-
-	  nexus_bringup();
+	 /* -------------------------------------------------------------------------
+	  * 1️- Hardware bring-up (user-specific)
+	  * -------------------------------------------------------------------------
+	  *  Initialize peripherals, motor controllers, encoders, and sensors.
+	  *  This part is specific to the robot platform.
+	  */
+	  nexus_bringup();  // Custom board-level init
 	  for (int i = 0; i < 20; ++i) {
-	  	    osDelay(100);
+	        osDelay(100); // short delay to let peripherals stabilize
 	  }
 
+	/* -------------------------------------------------------------------------
+	 * 2️- Configure the micro-ROS transport layer
+	 * -------------------------------------------------------------------------
+	 *  This binds micro-ROS to a communication channel (here UART2).
+	 *  The transport functions were defined earlier in transport_cubemx.c.
+	 *
+	 *    Change &huart2 to &huartX if you use another UART.
+	 */
 	  rmw_uros_set_custom_transport(
 	      true, (void *)&huart2,
 	      cubemx_transport_open, cubemx_transport_close,
 	      cubemx_transport_write, cubemx_transport_read);
 
+	 /* -------------------------------------------------------------------------
+	  * 3- Set up FreeRTOS-safe memory allocator
+	  * -------------------------------------------------------------------------
+	  *  Replaces default malloc/free with thread-safe versions
+	  *  that use FreeRTOS heap functions or user static pool.
+	  */
 	  rcl_allocator_t freeRTOS_allocator = rcutils_get_zero_initialized_allocator();
 	  freeRTOS_allocator.allocate      = microros_allocate;
 	  freeRTOS_allocator.deallocate    = microros_deallocate;
 	  freeRTOS_allocator.reallocate    = microros_reallocate;
 	  freeRTOS_allocator.zero_allocate = microros_zero_allocate;
 	  rcl_ret_t rc1 =  rcutils_set_default_allocator(&freeRTOS_allocator);
-	  if (rc1 != RCL_RET_OK) { /* Error handle */ }
+	  if (rc1 != RCL_RET_OK) {
+		  // Handle allocator init error (e.g. log or blink LED)
+	  }
 
+	 /* -------------------------------------------------------------------------
+	  * 4️- Ping the ROS 2 Agent to ensure connectivity
+	  * -------------------------------------------------------------------------
+	  *  micro-ROS communicates over XRCE-DDS; the Agent must be running
+	  *  on the PC (typically `ros2 run micro_ros_agent micro_ros_agent serial ...`)
+	  *  before this ping succeeds.
+	  */
 	  for (int i = 0; i < 50; ++i) {
 	    if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) break;
 	    osDelay(100);
 	  }
 
-	  allocator = rcl_get_default_allocator();
-	  rclc_support_init(&support, 0, NULL, &allocator);
+	 /* -------------------------------------------------------------------------
+	  * 5️- Create support context and node
+	  * -------------------------------------------------------------------------
+	  *  These are the core micro-ROS entities for the MCU.
+	  */
+	  allocator = rcl_get_default_allocator();			 // Retrieve active allocator
+	  rclc_support_init(&support, 0, NULL, &allocator);	 // Init context with default args
 
-	  rcl_node_t node_base_controller;
+	  rcl_node_t node_base_controller;					 // This MCU node
 	  rclc_node_init_default(&node_base_controller, "base_controller", "", &support);
 
 
-	  (void) rmw_uros_sync_session(1000);
+	  (void) rmw_uros_sync_session(1000);				// Synchronize session timing
 
+	 /* -------------------------------------------------------------------------
+	  * 6️- Initialize the Odometry Publisher
+	  * -------------------------------------------------------------------------
+	  *  Publishes to the `/odom` topic using the standard nav_msgs/Odometry type.
+	  *  The message header and frame ID are prepared once and reused.
+	  */
 	  rcl_ret_t rc7 = rclc_publisher_init_default(
 	      &odom_pub,
 	      &node_base_controller,
 	      ROSIDL_GET_MSG_TYPE_SUPPORT(nav_msgs, msg, Odometry),
 	      "odom");
-	  if (rc7 != RCL_RET_OK) {   }
+	  if (rc7 != RCL_RET_OK) {
+	          // Handle publisher init error
+	  }
+
 	  rosidl_runtime_c__String__init(&odom_msg.header.frame_id);
 	  rosidl_runtime_c__String__assign(&odom_msg.header.frame_id, "odom");
 	  odom_msg.header.stamp.sec = 0;
 	  odom_msg.header.stamp.nanosec = 0;
 
+	 /* -------------------------------------------------------------------------
+	  * 7️- Initialize the Executor and Timer
+	  * -------------------------------------------------------------------------
+	  *  The executor manages all callbacks (timers, subscriptions, etc.).
+	  *  Each timer is a periodic callback. Here, we set up odometry @ 100 Hz.
+	  */
 	  rclc_executor_init(&executor, &support.context, 4, &allocator);
 
 	  rcl_timer_t timer_odom;
-	  rclc_timer_init_default2(&timer_odom, &support, RCL_MS_TO_NS(10), odom_timer_cb, true);
+	  rclc_timer_init_default2(
+			  &timer_odom, &support, RCL_MS_TO_NS(10),			// period = 10 ms
+			  odom_timer_cb, true);	 							// true = autostart
 	  rclc_executor_add_timer(&executor, &timer_odom);
 
+	 /* -------------------------------------------------------------------------
+	  * 8️⃣ Executor main loop (runs forever)
+	  * -------------------------------------------------------------------------
+	  *  Non-blocking spin_some() allows other RTOS tasks to run concurrently.
+	  *  You can replace with rclc_executor_spin() for blocking loop.
+	  */
 	  for (;;) {
-	    rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
-	    //osDelay(5);
+	    rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));	// check callbacks every 5 ms
+	    //osDelay(5);											// optional if CPU load is high
 	  }
 
 }
