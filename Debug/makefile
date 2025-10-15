@@ -19,7 +19,6 @@ RM := rm -rf
 -include Core/Src/app/sensors/subdir.mk
 -include Core/Src/app/localization/subdir.mk
 -include Core/Src/app/control/subdir.mk
--include Core/Src/NexusControl/subdir.mk
 -include Core/Src/subdir.mk
 -include objects.mk
 

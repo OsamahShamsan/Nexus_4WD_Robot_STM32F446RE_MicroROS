@@ -1,16 +1,16 @@
 
 #include "odom_handler.h"
 #include "robot_params.h"
+
 #include <math.h>
 #include <stdint.h>
+
 #include <rclc/rclc.h>
-#include <nav_msgs/msg/odometry.h>
 #include <rmw_microros/rmw_microros.h>
+#include <nav_msgs/msg/odometry.h>
 
 rcl_publisher_t odom_pub;         // Publisher object → publishes /odom topic
 nav_msgs__msg__Odometry odom_msg; // Struct holding odometry data to send back to ROS2
-rcl_subscription_t twist_sub;     // Subscription object → listens to /twist_nexus topic
-geometry_msgs__msg__Twist twist_msg;  // Struct holding the received Twist message data
 
 extern volatile int16_t deltaEncoder[4];		// {RL, FL, FR, RR}
 extern volatile bool encUpdateFlag;

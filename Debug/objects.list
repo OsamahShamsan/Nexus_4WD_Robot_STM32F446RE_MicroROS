@@ -1,5 +1,3 @@
-"./Core/Src/NexusControl/myMotor.o"
-"./Core/Src/NexusControl/mySensors.o"
 "./Core/Src/app/control/motor_driver.o"
 "./Core/Src/app/localization/odom_handler.o"
 "./Core/Src/app/sensors/current_sensor.o"

@@ -1,6 +1,9 @@
+#include "motor_driver.h"
 #include "robot_params.h"
 
-#include "motor_driver.h"
+#include <rclc/rclc.h>
+
+#include <geometry_msgs/msg/twist.h>
 
 
 extern TIM_HandleTypeDef htim2;
@@ -11,6 +14,10 @@ volatile float g_wz_step_radps = 0.10f;
 volatile int32_t g_ccr_applied[4] = {0, 0, 0, 0};
 
 PID_t pid_wheel[4];
+
+rcl_subscription_t twist_sub;     // Subscription object → listens to /twist_nexus topic
+geometry_msgs__msg__Twist twist_msg;  // Struct holding the received Twist message data
+
 
 static inline float clamp(float v, float lo, float hi);
 static inline float ramp_step(float current, float target, float step);
@@ -87,6 +94,7 @@ void init_motors(void){
 	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);	// RR Motor
 
 	// Set RL, FL, FR and RR motors to initial speed. For example 0 PWM = 0 CCR = 0% Duty Cycle => t_on = 0 µs
+	/*
 	for(int i = 0; i <= 300; i++){
 		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i+200);	// RL Motor
 		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, i+100);	// FL Motor
@@ -94,6 +102,13 @@ void init_motors(void){
 		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);		// RR Motor
 	  	HAL_Delay(15);
 	  }
+	*/
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);	// RL Motor
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, 0);	// FL Motor
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, 0);		// FR Motor
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);		// RR Motor
+
+
 }
 
 void Emergency_Stop(void) {
@@ -104,20 +119,43 @@ void Emergency_Stop(void) {
 }
 
 
-void Mecanum_Control(float vx_target, float vy_target, float w_target)
+void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
 {
-    static float vx = 0, vy = 0, wz = 0;
-    vx = ramp_step(vx_target, vx, g_v_step);
-    vy = ramp_step(vy_target, vy, g_v_step);
-    wz = ramp_step(w_target,  wz, g_wz_step_radps);
+
+    static float vx_target = 0, vy_target = 0, w_target = 0;
+    vx_target = ramp_step(vx_twist, vx_target, g_v_step);
+    vy_target = ramp_step(vy_twist, vy_target, g_v_step);
+    w_target  = ramp_step(wz_twist,  w_target, g_wz_step_radps);
 
     // Desired wheel linear velocities
-    float V_des[4];
-    V_des[0] = +vx + vy - (A_SUM * wz);  // RL
-    V_des[1] = +vx - vy - (A_SUM * wz);  // FL
-    V_des[2] = +vx + vy + (A_SUM * wz);  // FR
-    V_des[3] = +vx - vy + (A_SUM * wz);  // RR
+    float V_target[4];
+    V_target[0] = +vx_target + vy_target - (A_SUM * w_target);  // RL
+    V_target[1] = +vx_target - vy_target - (A_SUM * w_target);  // FL
+    V_target[2] = +vx_target + vy_target + (A_SUM * w_target);  // FR
+    V_target[3] = +vx_target - vy_target + (A_SUM * w_target);  // RR
 
+	 // PWM Conversion and CCR clamping
+	setMotorDir(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin,
+				RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, V_target[0]);
+
+	setMotorDir(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin,
+				FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, V_target[1]);
+
+	setMotorDir(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin,
+				FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, V_target[2]);
+
+	setMotorDir(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin,
+				RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, V_target[3]);
+
+
+	int CCR[4];
+	for (int i = 0; i < 4; i++)
+	{
+		CCR[i] = (int)((fabsf(V_target[i]) / MAX_WHEEL_LINEAR_V) * CCR_MAX);
+		CCR[i] = (int)clamp((float)CCR[i], 0.0f, CCR_MAX);
+	}
+
+    /*
     // Measured wheel speeds from encoder
     extern volatile int16_t deltaEncoder[4];
     const float DT = 0.001f; // 1 kHz
@@ -133,15 +171,9 @@ void Mecanum_Control(float vx_target, float vy_target, float w_target)
     // PID regulation
     float pid_output[4];
     for (int i = 0; i < 4; i++) {
-        pid_output[i] = PID_Update(&pid_wheel[i], V_des[i], v_meas[i], DT);
+        pid_output[i] = PID_Update(&pid_wheel[i], V_target[i], v_meas[i], DT);
     }
 
-    // Convert PID output to PWM
-    int CCR[4];
-    for (int i = 0; i < 4; i++) {
-        CCR[i] = (int)((fabsf(pid_output[i]) / MAX_WHEEL_LINEAR_V) * CCR_MAX);
-        CCR[i] = (int)clamp((float)CCR[i], 0.0f, CCR_MAX);
-    }
 
     // Motor directions
     setMotorDir(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin,
@@ -152,6 +184,15 @@ void Mecanum_Control(float vx_target, float vy_target, float w_target)
                 FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, pid_output[2]);
     setMotorDir(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin,
                 RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, pid_output[3]);
+
+
+    // Convert PID output to PWM
+    int CCR[4];
+    for (int i = 0; i < 4; i++) {
+        CCR[i] = (int)((fabsf(pid_output[i]) / MAX_WHEEL_LINEAR_V) * CCR_MAX);
+        CCR[i] = (int)clamp((float)CCR[i], 0.0f, CCR_MAX);
+    }
+*/
 
     uint32_t TIM_CHANNELS[4] = {
     	TIM_CHANNEL_1, // RL
