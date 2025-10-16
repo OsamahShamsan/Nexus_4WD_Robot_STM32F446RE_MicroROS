@@ -3,6 +3,7 @@
 "./Core/Src/app/sensors/current_sensor.o"
 "./Core/Src/app/sensors/imu_interface.o"
 "./Core/Src/app/sensors/ultrasonic_array.o"
+"./Core/Src/app/utils/debug_pub.o"
 "./Core/Src/app/utils/math_helpers.o"
 "./Core/Src/custom_memory_manager.o"
 "./Core/Src/dma_transport.o"

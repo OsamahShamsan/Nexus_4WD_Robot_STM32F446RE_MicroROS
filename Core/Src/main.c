@@ -131,6 +131,7 @@
 #include "imu_interface.h"			// I2C/SPI IMU readout and filtering
 #include "ultrasonic_array.h"		// trigger/echo handling for multiple sensors
 #include "odom_handler.h"			// encoder integration, pose update
+#include "debug_pub.h"
 
 /*
  *  This step rarely changes except when adding new sensors or message types.
@@ -311,6 +312,7 @@ void * microros_zero_allocate(size_t n, size_t size_of_elem, void * state);     
  */
 void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time);	 // Publish callback   (Timer callback to compute and publish odometry)
 void twist_callback(const void * msgin);							 // Subscribe callback
+extern bool debug_pub_init(rcl_node_t* node);
 
 /* --------------------------------------------------------------------------------------
  * END OF STEP 3
@@ -324,9 +326,9 @@ void twist_callback(const void * msgin);							 // Subscribe callback
  * ======================================================================================
  */
 
-volatile int16_t deltaEncoder[4] = {0};		// {RL, FL, FR, RR}
-volatile int16_t currCount[4]	 = {0};		// {RL, FL, FR, RR}
-volatile int16_t pastCount[4] 	 = {0};		// {RL, FL, FR, RR}
+volatile int32_t deltaEncoder[4] = {0};		// {RL, FL, FR, RR}
+volatile uint32_t currCount[4]	 = {0};		// {RL, FL, FR, RR}
+volatile int32_t pastCount[4] 	 = {0};		// {RL, FL, FR, RR}
 volatile bool encUpdateFlag 	 = 0;
 
 void nexus_bringup(void);
@@ -340,7 +342,7 @@ void nexus_bringup(void){
 	HAL_TIM_Encoder_Start(&htim8, TIM_CHANNEL_ALL);
 
 	init_motors();
-
+	PID_Init(0.035f, 0.02f, 0);
 }
 
 /* --------------------------------------------------------------------------------------
@@ -750,9 +752,9 @@ void twist_callback(const void * msgin)
     const geometry_msgs__msg__Twist * msg = (const geometry_msgs__msg__Twist *) msgin;
 
     // Extract velocity commands (SI units)
-    float vx = msg->linear.x;   // forward/backward [m/s]
-    float vy = msg->linear.y;   // lateral [m/s]
-    float wz = msg->angular.z;  // rotation [rad/s]
+    double vx = msg->linear.x;   // forward/backward [m/s]
+    double vy = msg->linear.y;   // lateral [m/s]
+    double wz = msg->angular.z;  // rotation [rad/s]
 
     // Pass values to the motion controller
     /*
@@ -805,9 +807,6 @@ void StartDefaultTask(void *argument)
 	  *  This part is specific to the robot platform.
 	  */
 	  nexus_bringup();  // Custom board-level init
-	  for (int i = 0; i < 20; ++i) {
-	        osDelay(100); // short delay to let peripherals stabilize
-	  }
 
 	/* -------------------------------------------------------------------------
 	 * 2️- Configure the micro-ROS transport layer
@@ -898,15 +897,6 @@ void StartDefaultTask(void *argument)
 	     // Handle publisher init error
 	  }
 
-	  /*
-	   * The message header and frame ID are prepared once and reused.
-	   */
-	  rosidl_runtime_c__String__init(&odom_msg.header.frame_id);
-	  rosidl_runtime_c__String__assign(&odom_msg.header.frame_id, "odom");
-	  odom_msg.header.stamp.sec = 0;
-	  odom_msg.header.stamp.nanosec = 0;
-
-	  //rcl_ret_t rc8 = rclc_subscribtion_init_defaul();
 	  rcl_ret_t rc8 = rclc_subscription_init_default(
 	      &twist_sub,													// param1 => subscriber
 	      &node_base_controller,										// param2 => node
@@ -916,6 +906,9 @@ void StartDefaultTask(void *argument)
 	  if (rc8 != RCL_RET_OK) {
 	  	 // Handle publisher init error
 	  }
+
+	  debug_init(&node_base_controller);
+
 
 	 /* -------------------------------------------------------------------------
 	  * 7️- Initialise the Executor and Timer
@@ -967,16 +960,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 		for (int i=0; i<4; i++) {
 
-		  deltaEncoder[i] = (int16_t)(currCount[i] - pastCount[i]);
+		  deltaEncoder[i] = (int32_t) (currCount[i] - pastCount[i]);
 
-		  if (deltaEncoder[i] > 32767)       deltaEncoder[i] -= 65536;
-		  else if (deltaEncoder[i] < -32768) deltaEncoder[i] += 65536;
+		  if (deltaEncoder[i] > 32767)        deltaEncoder[i] -= (int16_t) 65536;
+		  else if (deltaEncoder[i] < -32768)  deltaEncoder[i] += (int16_t) 65536;
 
-		  pastCount[i] = currCount[i];
+		  pastCount[i] = (int32_t)currCount[i];
 
 	  }
 		encUpdateFlag = 1;
 	}
+
 	else if (htim->Instance == TIM7)
   {
     HAL_IncTick();

@@ -1,5 +1,5 @@
-#ifndef ROBOT_PARAMS_H_
-#define ROBOT_PARAMS_H_
+#pragma once
+
 
 /*
 // ================= SYSTEM CONFIGURATION =================
@@ -184,6 +184,11 @@ PID Controller Equation (speed control)
 // ----------------------------------------------------------------------------------
 // ----------- Geometry of the wheels and (Faulhaber) motor specifications ----------
 // ----------------------------------------------------------------------------------
+
+#ifndef M_PI
+#define M_PI 				  			3.1416f
+#endif
+
 #define NUM_WHEELS 						 	4
 
 // ----------------------------------------------------------
@@ -235,8 +240,8 @@ PID Controller Equation (speed control)
 	#endif
 
 	#define MIN_WHEEL_LINEAR_V 				(-MAX_WHEEL_LINEAR_V)
-	#define MAX_WHEEL_ANGULAR_V_RADPS 		11.4f
-	#define MIN_WHEEL_ANGULAR_V_RADPS 		-11.4f
+	#define MAX_WHEEL_ANGULAR_V_RADPS 		11.45f
+	#define MIN_WHEEL_ANGULAR_V_RADPS 		-11.45f
 
 	#define MAX_ROBOT_V 					MAX_WHEEL_LINEAR_V
 	#define MIN_ROBOT_V 					(-MAX_ROBOT_V)
@@ -261,8 +266,8 @@ PID Controller Equation (speed control)
 	#endif
 
 	#define MIN_WHEEL_LINEAR_V 				(-MAX_WHEEL_LINEAR_V)
-	#define MAX_WHEEL_ANGULAR_V_RADPS 		13.2f
-	#define MIN_WHEEL_ANGULAR_V_RADPS 		-13.2f
+	#define MAX_WHEEL_ANGULAR_V_RADPS 		13.25f
+	#define MIN_WHEEL_ANGULAR_V_RADPS 		-13.25f
 
 	#define MAX_ROBOT_V 					MAX_WHEEL_LINEAR_V
 	#define MIN_ROBOT_V 					(-MAX_ROBOT_V)
@@ -281,11 +286,12 @@ PID Controller Equation (speed control)
 // Encoders specifications
 #define ENCODER_CPR   					12
 #define GEARBOX_RATIO 					64
-#define DECODING_MODE  					4		 			// (rising and falling edges of channels A and B are counted)
-#define TICKS_PER_REV     		  		3072.0f	 			// ENCODER_CPR * GEARBOX_RATIO * DECODING_MODE = 12 * 64 * 4 = 3072 tick per (WHEEL) revolution
+#define ENCODER_QUAD    				4
+#define TICKS_PER_REV     		  		((ENCODER_CPR * ENCODER_QUAD) * GEARBOX_RATIO)
 
-#define RAD_PER_TICK      		 	 	0.0041f  			// (2 * M_PI / (float)TICKS_PER_REV) = ~0.0041f [rad/tick]
-#define DEG_PER_TICK   					0.234f 	 			// (360.0f ° / (float)TICKS_PER_REV) = ~0.234	 [deg/tick]
+#define RAD_PER_TICK         			(2.0f * M_PI / (float)TICKS_PER_REV)
+
+//#define DEG_PER_TICK   					0.234f 	 									// (360.0f ° / (float)TICKS_PER_REV) = ~0.234	 [deg/tick]
 
 
 // ----------------------------------------------------------------------------------
@@ -305,16 +311,15 @@ PID Controller Equation (speed control)
 #define KI_DEFAULT      		   	   (0.31f/0.02f)  		// ≈15.5  [1/s]
 #define KD_DEFAULT       		   		0.0f
 
-#define KC           					0.31f
+#define KC           					0.35f
 #define TAUI         					0.02f
 #define TAUD        					0.00f
 
+#define KP								KC					// Proportional gain
+#define KI								KC / TAUI			// Integral gain
+#define KD								KC * TAUD			// Derivative gain
 
-#define	SAMPLETIME	  					0.001f 				// sample time for encoder readings    1 [ms]
-#define CONTROL_DT       		   		0.001f				// control time for motor/PID control  1 [ms]
-
-#define RAD_PER_TICK_DIV_DT  (RAD_PER_TICK / CONTROL_DT)
-
+#define DeltaT       		   			0.001f				// control time for motor/PID control  1 [ms]
 
 // Output limiting
 #define INTEGRATOR_LIMIT  		  		0.30f   			// anti-windup clamp on I term (as duty)
@@ -325,9 +330,7 @@ PID Controller Equation (speed control)
 #define INTEGRAL_MAX 					50.0   				// anti-windup limit
 
 
-#define PID_KP							0.35f				// Proportional gain
-#define PID_KI							0.02f				// Integral gain
-#define PID_KD							0.00f				// Derivative gain
+
 #define PID_DT							0.001f				// [s] control loop period (1 kHz)
 
 // Integral anti-windup limit (unit-aware)
@@ -346,10 +349,7 @@ PID Controller Equation (speed control)
 #define SEC_PER_MIN 					60
 #define MICROS_PER_SEC 					1000000
 
-#ifndef M_PI
-#define M_PI 				  			3.1416
-#endif
+
 
 #define CMD_TIMEOUT_MS     		 		200u				// Watchdog: stop if no command in 200ms
 
-#endif /* ROBOT_PARAMS_H_ */
