@@ -291,7 +291,6 @@ PID Controller Equation (speed control)
 
 #define RAD_PER_TICK         			(2.0f * M_PI / (float)TICKS_PER_REV)
 
-//#define DEG_PER_TICK   					0.234f 	 									// (360.0f ° / (float)TICKS_PER_REV) = ~0.234	 [deg/tick]
 
 
 // ----------------------------------------------------------------------------------
