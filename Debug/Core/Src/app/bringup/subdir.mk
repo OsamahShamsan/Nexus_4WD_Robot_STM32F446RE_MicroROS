@@ -5,32 +5,23 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../Core/Src/app/sensors/current_sensor.c \
-../Core/Src/app/sensors/imu_interface.c \
-../Core/Src/app/sensors/mpu6050.c \
-../Core/Src/app/sensors/ultrasonic_array.c 
+../Core/Src/app/bringup/bringup.c 
 
 OBJS += \
-./Core/Src/app/sensors/current_sensor.o \
-./Core/Src/app/sensors/imu_interface.o \
-./Core/Src/app/sensors/mpu6050.o \
-./Core/Src/app/sensors/ultrasonic_array.o 
+./Core/Src/app/bringup/bringup.o 
 
 C_DEPS += \
-./Core/Src/app/sensors/current_sensor.d \
-./Core/Src/app/sensors/imu_interface.d \
-./Core/Src/app/sensors/mpu6050.d \
-./Core/Src/app/sensors/ultrasonic_array.d 
+./Core/Src/app/bringup/bringup.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
-Core/Src/app/sensors/%.o Core/Src/app/sensors/%.su Core/Src/app/sensors/%.cyclo: ../Core/Src/app/sensors/%.c Core/Src/app/sensors/subdir.mk
+Core/Src/app/bringup/%.o Core/Src/app/bringup/%.su Core/Src/app/bringup/%.cyclo: ../Core/Src/app/bringup/%.c Core/Src/app/bringup/subdir.mk
 	arm-none-eabi-gcc "$<" -mcpu=cortex-m4 -std=gnu11 -g3 -DDEBUG -DUSE_HAL_DRIVER -DSTM32F446xx -c -I../Core/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc -I../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy -I../Drivers/CMSIS/Device/ST/STM32F4xx/Include -I../Drivers/CMSIS/Include -I../Middlewares/Third_Party/FreeRTOS/Source/include -I../Middlewares/Third_Party/FreeRTOS/Source/CMSIS_RTOS_V2 -I../Middlewares/Third_Party/FreeRTOS/Source/portable/GCC/ARM_CM4F -IC:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/micro_ros_stm32cubemx_utils-kilted/microros_static_library_ide/libmicroros/include -I"C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/app/control" -I"C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/app/config" -I"C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/app/localization" -I"C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/app/sensors" -I"C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/app/utils" -I"C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/app/bringup" -I"C:/Users/engsh/Desktop/BA/Nexus_STM32F4_ROS2/NexusRobot_ROS2_Slave/Core/Src/app/utils/msg" -O0 -ffunction-sections -fdata-sections -Wall -Wmissing-include-dirs -Wswitch-default -Wswitch-enum -Wconversion -fstack-usage -fcyclomatic-complexity -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@"  -mfpu=fpv4-sp-d16 -mfloat-abi=hard -mthumb -o "$@"
 
-clean: clean-Core-2f-Src-2f-app-2f-sensors
+clean: clean-Core-2f-Src-2f-app-2f-bringup
 
-clean-Core-2f-Src-2f-app-2f-sensors:
-	-$(RM) ./Core/Src/app/sensors/current_sensor.cyclo ./Core/Src/app/sensors/current_sensor.d ./Core/Src/app/sensors/current_sensor.o ./Core/Src/app/sensors/current_sensor.su ./Core/Src/app/sensors/imu_interface.cyclo ./Core/Src/app/sensors/imu_interface.d ./Core/Src/app/sensors/imu_interface.o ./Core/Src/app/sensors/imu_interface.su ./Core/Src/app/sensors/mpu6050.cyclo ./Core/Src/app/sensors/mpu6050.d ./Core/Src/app/sensors/mpu6050.o ./Core/Src/app/sensors/mpu6050.su ./Core/Src/app/sensors/ultrasonic_array.cyclo ./Core/Src/app/sensors/ultrasonic_array.d ./Core/Src/app/sensors/ultrasonic_array.o ./Core/Src/app/sensors/ultrasonic_array.su
+clean-Core-2f-Src-2f-app-2f-bringup:
+	-$(RM) ./Core/Src/app/bringup/bringup.cyclo ./Core/Src/app/bringup/bringup.d ./Core/Src/app/bringup/bringup.o ./Core/Src/app/bringup/bringup.su
 
-.PHONY: clean-Core-2f-Src-2f-app-2f-sensors
+.PHONY: clean-Core-2f-Src-2f-app-2f-bringup
 

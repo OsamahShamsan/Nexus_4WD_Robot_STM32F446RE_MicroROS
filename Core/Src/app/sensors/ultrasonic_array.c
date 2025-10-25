@@ -1,3 +1,4 @@
+/*
 #include "ultrasonic_array.h"
 
 // ----------------------------------------------------------------------------------
@@ -78,3 +79,5 @@ int16_t SONAR_ReadTemperature(SONAR_HandleTypeDef *hsonar) {
         return -raw; // negative temp
     }
 }
+
+*/

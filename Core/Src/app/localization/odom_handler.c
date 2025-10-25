@@ -25,8 +25,8 @@ extern void dbg_publish_floats(const char* tag, const float* vals, size_t n);
 
 static EncWheel enc[4] = {
     { &htim4, 0, +1 },  // RL
-    { &htim1, 0, -1 },  // FL
-    { &htim3, 0, -1 },  // FR
+    { &htim1, 0, +1 },  // FL
+    { &htim3, 0, +1 },  // FR
     { &htim8, 0, +1 },  // RR
 };
 
@@ -72,7 +72,7 @@ void compute_and_publish_odometry(void)
     	d_ticks[i] = (int16_t)(d * enc[i].sign);
     	enc[i].last = ccur;
 
-    	float wi = (float)d * RAD_PER_TICK / (float)dt;  // rad/s at motor=>wheel config
+    	float wi = (float)d * (float)RAD_PER_TICK / (float)dt;  // rad/s at motor=>wheel config
     	w[i] = wi * enc[i].sign;                      // per-wheel sign
     }
 
@@ -104,8 +104,8 @@ void compute_and_publish_odometry(void)
     odom_msg.twist.twist.linear.y  = vy;
     odom_msg.twist.twist.angular.z = wz;
 
-    odom_msg.header.stamp.sec     = (int32_t)(now_ns / 1000000000ULL);
-    odom_msg.header.stamp.nanosec = (uint32_t)(now_ns % 1000000000ULL);
+    odom_msg.header.stamp.sec     = (int32_t)(now_ns / 1000000000LL);
+    odom_msg.header.stamp.nanosec = (uint32_t)(now_ns % 1000000000LL);
 
     rcl_ret_t rc = rcl_publish(&odom_pub, &odom_msg, NULL);
     if (rc != RCL_RET_OK) {

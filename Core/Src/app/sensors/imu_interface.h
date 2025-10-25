@@ -4,10 +4,11 @@
 #include <stdbool.h>
 
 // ----------- IMU MPU6050 -----------------------------------------------------------
-#define MPU_ADDR_7B  0x68
+#define MPU_ADDR_7B  0x68				 // or (0x69 << 1)
 #define MPU_ADDR     (MPU_ADDR_7B << 1)   // HAL uses 8-bit address
 #define GRAVITY      9.80665f
 #define DEG2RAD      0.017453292519943295f
+#define MPU_REG_ACCEL_X 0x3B
 
 
 // ----------------------------------------------------------------------------------

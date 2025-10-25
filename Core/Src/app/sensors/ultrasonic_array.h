@@ -1,3 +1,4 @@
+/*
 #ifndef ULTRASONIC_ARRAY_H_
 #define ULTRASONIC_ARRAY_H_
 
@@ -50,4 +51,6 @@ int16_t SONAR_Trigger(SONAR_HandleTypeDef *hsonar);
 int16_t SONAR_ReadDistance(SONAR_HandleTypeDef *hsonar);
 int16_t SONAR_ReadTemperature(SONAR_HandleTypeDef *hsonar);
 
-#endif /* ULTRASONIC_ARRAY_H_ */
+#endif // ULTRASONIC_ARRAY_H_
+
+*/

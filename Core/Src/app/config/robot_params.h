@@ -284,9 +284,9 @@ PID Controller Equation (speed control)
 // ----------- Encoder specifications -----------------------------------------------
 // ----------------------------------------------------------------------------------
 // Encoders specifications
-#define ENCODER_CPR   					12
-#define GEARBOX_RATIO 					64
-#define ENCODER_QUAD    				4
+#define ENCODER_CPR   					12.0f
+#define GEARBOX_RATIO 					64.0f
+#define ENCODER_QUAD    				4.0f
 #define TICKS_PER_REV     		  		((ENCODER_CPR * ENCODER_QUAD) * GEARBOX_RATIO)
 
 #define RAD_PER_TICK         			(2.0f * M_PI / (float)TICKS_PER_REV)

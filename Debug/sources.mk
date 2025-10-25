@@ -22,6 +22,7 @@ C_DEPS :=
 
 # Every subdirectory with source files must be described here
 SUBDIRS := \
+Core/Src/app/bringup \
 Core/Src/app/control \
 Core/Src/app/localization \
 Core/Src/app/sensors \
