@@ -274,7 +274,7 @@ PID Controller Equation (speed control)
 	#define MAX_ROBOT_WZ_RADPS 				2.2
 	#define MIN_ROBOT_WZ_RADPS 				-2.2
 
-	#define CCR_MAX    						500.0    		// 100% PWM duty
+	#define CCR_MAX    						500    		// 100% PWM duty
 	#define CC_MIN							0				// 0% PWM duty
 
 #endif
@@ -289,7 +289,7 @@ PID Controller Equation (speed control)
 #define ENCODER_QUAD    				4.0f
 #define TICKS_PER_REV     		  		((ENCODER_CPR * ENCODER_QUAD) * GEARBOX_RATIO)
 
-#define RAD_PER_TICK         			(2.0f * M_PI / (float)TICKS_PER_REV)
+#define RAD_PER_TICK         			(2.0f * 3.1416f / TICKS_PER_REV)
 
 
 

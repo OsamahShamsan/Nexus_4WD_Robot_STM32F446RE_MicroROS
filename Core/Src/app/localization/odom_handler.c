@@ -43,15 +43,6 @@ void compute_and_publish_odometry(void)
         	enc[i].last = (int32_t)( __HAL_TIM_GET_COUNTER(enc[i].tim));
         }
         last_ns = now_ns;
-
-        if (!odom_msg.header.frame_id.data) {
-            rosidl_runtime_c__String__init(&odom_msg.header.frame_id);
-            rosidl_runtime_c__String__assign(&odom_msg.header.frame_id, "odom");
-        }
-        if (!odom_msg.child_frame_id.data) {
-            rosidl_runtime_c__String__init(&odom_msg.child_frame_id);
-            rosidl_runtime_c__String__assign(&odom_msg.child_frame_id, "base_link");
-        }
         return;
     }
 
