@@ -3,15 +3,16 @@
 #include <rosidl_runtime_c/primitives_sequence_functions.h>
 #include <rclc/rclc.h>
 
+/*
 
-static rcl_publisher_t dbg_pub;
-static std_msgs__msg__Float32MultiArray dbg_msg;
-static bool dbg_inited = false;
+//static rcl_publisher_t dbg_pub;
+//static std_msgs__msg__Float32MultiArray dbg_msg;
+//static bool dbg_inited = false;
 
 #define CHECK_RCL(x) do { \
     rcl_ret_t _rc = (x);  \
     if (_rc != RCL_RET_OK) { \
-        /* optional error handling or logging */ \
+         \
     } \
 } while(0)
 
@@ -49,3 +50,4 @@ void debug_pub_cd_w(const uint16_t c[4], const int16_t d[4], const float w[4])
 
     CHECK_RCL(rcl_publish(&dbg_pub, &dbg_msg, NULL));
 }
+*/

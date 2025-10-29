@@ -5,39 +5,27 @@
 
 #include <geometry_msgs/msg/twist.h>
 
-
+/*
 // ----------------------------------------------------------------------------------
 // ----------- Motor control helpers  -----------------------------------------------
 // ----------------------------------------------------------------------------------
-static inline float clamp(float v, float lo, float hi);
+inline float clamp(float v, float lo, float hi);
 static inline float ramp(float target, float current, float step);
 static inline float ramp_and_clamp_sym(float target, float current, float step, float limit);
 static inline void setMotorDir(GPIO_TypeDef* INxA_Port, uint16_t INxA_Pin, GPIO_TypeDef* INxB_Port, uint16_t INxB_Pin, float speed);
 
 extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim1;
+extern TIM_HandleTypeDef htim2;
+extern TIM_HandleTypeDef htim4;
+extern TIM_HandleTypeDef htim8;
 
 volatile float g_v_step   = 20.0f;
 volatile float g_wz_step_radps = 0.10f;
-volatile uint32_t g_ccr_applied[4] = {0, 0, 0, 0};
-
-static const uint32_t TIM_CHANNELS[4] = {
-	TIM_CHANNEL_1, // RL
-	TIM_CHANNEL_2, // FL
-	TIM_CHANNEL_3, // FR
-	TIM_CHANNEL_4  // RR
-};
-
-PID_t pid_wheel[4];
-
-rcl_subscription_t twist_sub;     // Subscription object → listens to /twist_nexus topic
-geometry_msgs__msg__Twist twist_msg;  // Struct holding the received Twist message data
 
 
-static inline float clamp(float v, float lo, float hi){
-    if (v < lo) 		return lo;
-    else if (v > hi) 	return hi;
-    else 				return v;
-}
+
+
 
 static inline float ramp(float target, float current, float step)
 {
@@ -69,74 +57,14 @@ void ctrlparams_set_steps(float v_step, float wz_step_radps)
     if (wz_step_radps > 0.0f) g_wz_step_radps = wz_step_radps;
 }
 
-static inline void setMotorDir(GPIO_TypeDef* INxA_Port, uint16_t INxA_Pin, GPIO_TypeDef* INxB_Port, uint16_t INxB_Pin, float speed) {
 
-	if (speed > 0.0f) { // Forward
-		HAL_GPIO_WritePin(INxB_Port, INxB_Pin, GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(INxA_Port, INxA_Pin, GPIO_PIN_SET);
-
-	} else if (speed < 0.0f) { // Reverse
-		HAL_GPIO_WritePin(INxA_Port, INxA_Pin, GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(INxB_Port, INxB_Pin, GPIO_PIN_SET);
-
-	} else { // Stop / Brake
-		HAL_GPIO_WritePin(INxA_Port, INxA_Pin, GPIO_PIN_RESET);
-		HAL_GPIO_WritePin(INxB_Port, INxB_Pin, GPIO_PIN_RESET);
-	}
-}
 
 // ----------------------------------------------------------------------------------
 // ----------- Motors control functions definitions  ---------------------------------
 // ----------------------------------------------------------------------------------
-void init_motors(uint32_t CCR){
+*/
 
-	//uint32_t CCR_clamped = (uint32_t)clamp((float)CCR, 0 , 300);
-	uint32_t CCR_clamped = CCR;
-
-	// Set the direction to Forward (INA = 1) & (INB = 0)
-	// Rear Left
-	HAL_GPIO_WritePin(RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin, GPIO_PIN_SET);
-	// Front Left
-	HAL_GPIO_WritePin(FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin, GPIO_PIN_SET);
-	// Rear Right
-	HAL_GPIO_WritePin(RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin, GPIO_PIN_SET);
-	// Front Right
-	HAL_GPIO_WritePin(FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, GPIO_PIN_RESET);
-	HAL_GPIO_WritePin(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin, GPIO_PIN_SET);
-
-	// Enable the full bridges of the motor drivers (VDD)
-	HAL_GPIO_WritePin(RL_VDD_GPO_GPIO_Port, RL_VDD_GPO_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(FR_VDD_GPO_GPIO_Port, FR_VDD_GPO_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(RR_VDD_GPO_GPIO_Port, RR_VDD_GPO_Pin, GPIO_PIN_SET);
-	HAL_GPIO_WritePin(FL_VDD_GPO_GPIO_Port, FL_VDD_GPO_Pin, GPIO_PIN_SET);
-
-	// Start the PWM signals
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);	// RL Motor
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);	// FL Motor
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);	// FR Motor
-	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);	// RR Motor
-
-	// Set RL, FL, FR and RR motors to initial speed. For example 0 PWM = 0 CCR = 0% Duty Cycle => t_on = 0 µs
-	/*
-	for(uint32_t i = 0; i <= CCR_clamped; i++){
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i+200UL);	// RL Motor
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, i+100UL);	// FL Motor
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);		// FR Motor
-		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);		// RR Motor
-	  	HAL_Delay(15);
-	  }
-	*/
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, CCR_clamped);	// RL Motor
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, CCR_clamped);	// FL Motor
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, CCR_clamped);	// FR Motor
-	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, CCR_clamped);	// RR Motor
-
-
-}
-
+/*
 void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
 {
 
@@ -170,7 +98,7 @@ void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
         CCR[i] = (uint32_t)clamp((float)CCR[i], 0.0f, 250.0f);
     }
 
-  /*
+
     // Measured wheel speeds from encoder
     extern volatile int16_t deltaEncoder[4];
     float w_meas[4];
@@ -205,7 +133,6 @@ void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
         CCR[i] = (int)((fabsf(pid_output[i]) / MAX_WHEEL_ANGULAR_V_RADPS) * CCR_MAX);
         CCR[i] = (int)clamp((float)CCR[i], 0.0f, CCR_MAX);
     }
-*/
 
     // Apply PWM
 	for (int i = 0; i < 4; i++) {
@@ -214,46 +141,8 @@ void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
 	}
 }
 
-/*
-void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
-{
-
-    float w_target[4];	    // Desired wheel angular velocities
-    w_target[0] = (+vx_twist + vy_twist - (A_SUM * wz_twist)) / WHEEL_R;  // RL
-    w_target[1] = (+vx_twist - vy_twist - (A_SUM * wz_twist)) / WHEEL_R;  // FL
-    w_target[2] = (+vx_twist + vy_twist + (A_SUM * wz_twist)) / WHEEL_R;  // FR
-    w_target[3] = (+vx_twist - vy_twist + (A_SUM * wz_twist)) / WHEEL_R;  // RR
 
 
-    extern volatile float w_meas[4];	// Measured wheel speeds from encoder
-    float pid_output[4];
-
-    for (int i = 0; i < 4; i++) {
-        pid_output[i] = PID_Update(&pid_wheel[i], w_target[i], w_meas[i]);
-    }
-
-    // Motor directions
-    setMotorDir(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin,
-                RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, pid_output[0]);
-    setMotorDir(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin,
-                FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, pid_output[1]);
-    setMotorDir(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin,
-                FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, pid_output[2]);
-    setMotorDir(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin,
-                RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, pid_output[3]);
-
-    uint32_t CCR[4];					// Convert PID output to PWM
-    for (int i = 0; i < 4; i++) {
-        CCR[i] = (uint32_t)((fabsf(pid_output[i]) / MAX_WHEEL_ANGULAR_V_RADPS) * 250.0f);
-        CCR[i] = (uint32_t)clamp((float)CCR[i], 0.0f, 250.0f);
-    }
-
-    for (int i = 0; i < 4; i++) {
-        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNELS[i], CCR[i]);			// Apply PWM
-        g_ccr_applied[i] = CCR[i];
-    }
-}
-*/
 
 void Emergency_Stop(void) {
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, 0);	// RL Motor
@@ -262,65 +151,10 @@ void Emergency_Stop(void) {
 	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);	// RR Motor
 }
 
+*/
+
+
 // ----------------------------------------------------------------------------------
 // ----------- PID functions definitions  -------------------------------------------
 // ----------------------------------------------------------------------------------
-static void PID_WheelInit(PID_t *pid, float Kp, float Ki, float Kd, float dt);
-
-void PID_Init(float Kc, float taui, float taud)
-{
-    if (Kc == 0.0f)   Kc   = KC;
-    if (taui == 0.0f) taui = TAUI;
-    if (taud == 0.0f) taud = TAUD;
-
-    PID_WheelInit(&pid_wheel[0], Kc, taui, taud, DeltaT);   // RL
-    PID_WheelInit(&pid_wheel[1], Kc, taui, taud, DeltaT);   // FL
-    PID_WheelInit(&pid_wheel[2], Kc, taui, taud, DeltaT);   // FR
-    PID_WheelInit(&pid_wheel[3], Kc, taui, taud, DeltaT);   // RR
-
-}
-
-static void PID_WheelInit(PID_t *pid, float Kc, float tau_i, float tau_d, float dt)
-{
-    pid->Kc = Kc;
-    pid->tau_i = tau_i;
-    pid->tau_d = tau_d;
-
-    // Precompute coefficients (Tustin/bilinear transform)
-    pid->cof_A =  Kc * (1.0f + (dt / (2.0f * tau_i)) + (tau_d / dt));
-    pid->cof_B = -Kc * (1.0f - (dt / (2.0f * tau_i)) + (2.0f * tau_d / dt));
-    pid->cof_C = Kc * (tau_d / dt);
-
-    // Initialize state
-    pid->last_error = 0.0f;
-    pid->prev_error = 0.0f;
-    pid->prev_output = 0.0f;
-    pid->output = 0.0f;
-
-    // Default limits (can be overridden)
-    pid->output_max =  MAX_WHEEL_ANGULAR_V_RADPS;
-    pid->output_min =  MIN_WHEEL_ANGULAR_V_RADPS;
-}
-
-float PID_Update(PID_t *pid, float setpoint, float input)
-{
-    float error = setpoint - input;
-
-    float output = pid->prev_output
-                 + pid->cof_A * error
-                 + pid->cof_B * pid->last_error
-                 + pid->cof_C * pid->prev_error;
-
-    // Clamp to limits
-    if (output > pid->output_max) output = pid->output_max;
-    else if (output < pid->output_min) output = pid->output_min;
-
-    // Shift states
-    pid->prev_error = pid->last_error;
-    pid->last_error = error;
-    pid->prev_output = output;
-    pid->output = output;
-
-    return output;
-}
 

@@ -284,12 +284,8 @@ PID Controller Equation (speed control)
 // ----------- Encoder specifications -----------------------------------------------
 // ----------------------------------------------------------------------------------
 // Encoders specifications
-#define ENCODER_CPR   					12.0f
-#define GEARBOX_RATIO 					64.0f
-#define ENCODER_QUAD    				4.0f
-#define TICKS_PER_REV     		  		((ENCODER_CPR * ENCODER_QUAD) * GEARBOX_RATIO)
 
-#define RAD_PER_TICK         			(2.0f * 3.1416f / TICKS_PER_REV)
+
 
 
 
@@ -318,7 +314,6 @@ PID Controller Equation (speed control)
 #define KI								KC / TAUI			// Integral gain
 #define KD								KC * TAUD			// Derivative gain
 
-#define DeltaT       		   			0.001f				// control time for motor/PID control  1 [ms]
 
 // Output limiting
 #define INTEGRATOR_LIMIT  		  		0.30f   			// anti-windup clamp on I term (as duty)

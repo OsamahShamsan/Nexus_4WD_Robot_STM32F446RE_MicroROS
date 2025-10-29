@@ -58,8 +58,8 @@
 #include "robot_params.h"			// wheel geometry, PID constants, topic settings
 #include "motor_driver.h"			// PWM, direction control, Mecanum_Control()
 //#include "ultrasonic_array.h"		// trigger/echo handling for multiple sensors
-#include "odom_handler.h"			// encoder integration, pose update
-#include "debug_pub.h"
+//#include "odom_handler.h"			// encoder integration, pose update
+//#include "debug_pub.h"
 
 //#include "motor_currents_msg.h"
 //#include "mpu6050.h"
@@ -118,11 +118,11 @@ rclc_executor_t executor;
 
 rcl_node_t node_base_controller;
 
-extern rcl_subscription_t 		 twist_sub;     	// Subscription object → listens to /twist_nexus topic
-extern geometry_msgs__msg__Twist twist_msg;  // Struct holding the received Twist message data
+rcl_subscription_t 		 twist_sub;     	// Subscription object → listens to /twist_nexus topic
+geometry_msgs__msg__Twist twist_msg;  // Struct holding the received Twist message data
 
-extern rcl_publisher_t 			 odom_pub;         // Publisher object → publishes /odom topic
-extern nav_msgs__msg__Odometry   odom_msg; // Struct holding odometry data to send back to ROS2
+rcl_publisher_t 			 odom_pub;         // Publisher object → publishes /odom topic
+nav_msgs__msg__Odometry   odom_msg; // Struct holding odometry data to send back to ROS2
 rcl_timer_t timer_odom;
 
 rcl_publisher_t 			  	imu_pub;
@@ -153,10 +153,8 @@ void * microros_reallocate(void * pointer, size_t size, void * state);          
 void * microros_zero_allocate(size_t n, size_t size_of_elem, void * state);     // Allocates and zeros array
 
 
-void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time);	 // Publish callback   (Timer callback to compute and publish odometry)
+//void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time);	 // Publish callback   (Timer callback to compute and publish odometry)
 void twist_callback(const void * msgin);							 // Subscribe callback
-extern bool debug_pub_init(rcl_node_t* node);
-
 
 
 /* USER CODE END PV */
@@ -176,7 +174,6 @@ static void MX_ADC1_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_I2C1_Init(void);
 void StartMicroROSTask(void *argument);
-
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -208,7 +205,6 @@ static inline void fill_ros_time(builtin_interfaces__msg__Time *t)
 // ===== Micro-ROS API =====
 void MicroROS_TransportInit(UART_HandleTypeDef *uart);
 void MicroROS_AllocatorInit(void);
-void MicroROS_PingAgent(uint32_t attempts, uint32_t period_ms);
 void MicroROS_CoreInit(void);
 void MicroROS_TopicsInit(void);
 void MicroROS_ExecutorInit(uint32_t executor_capacity);
@@ -267,14 +263,14 @@ mpu6050_t imu = {
 };
 
 typedef struct { float ax, ay, az, gx, gy, gz; } ImuBias;
-static ImuBias bias = {0};
+ ImuBias bias = {0};
 
 // To choose the full-scale ranges (see MPU6050 Joy-it datasheet/user manual):
 static inline uint8_t accel_cfg_val(void) { return 0 << 3; } // ±2g
 
 static inline uint8_t gyro_cfg_val(void)  { return 0 << 3; } // ±250 dps
 
-static void imu_calibrate(mpu6050_t *imu, unsigned n);
+//void imu_calibrate(mpu6050_t *imu, unsigned n);
 
 
 HAL_StatusTypeDef mpu6050_init(mpu6050_t *dev)
@@ -336,7 +332,8 @@ void HAL_I2C_MemRxCpltCallback(I2C_HandleTypeDef *hi2c)
 }
 
 // static (bias) calibration
-static void imu_calibrate(mpu6050_t *imu, unsigned n)
+/*
+void imu_calibrate(mpu6050_t *imu, unsigned n)
 {
     const unsigned throw_away = 20;
     double sax=0, say=0, saz=0, sgx=0, sgy=0, sgz=0;
@@ -364,12 +361,13 @@ static void imu_calibrate(mpu6050_t *imu, unsigned n)
 
     bias.ax = mean_ax - 0.0f;
     bias.ay = mean_ay - 0.0f;
-    bias.az = mean_az - 1.0f;     // <-- remove +1g from the bias!
+    bias.az = mean_az - 1.0f;
 
     bias.gx = (float)(sgx/used);
     bias.gy = (float)(sgy/used);
     bias.gz = (float)(sgz/used);
 }
+*/
 
 static int16_t be16(const uint8_t *p) { return (int16_t)((p[0] << 8) | p[1]); }
 
@@ -463,7 +461,6 @@ void i2c1_reset(void){
 // ---------------------------------------------------------------------------------------------------------------
 
 /*
-
 
 static rcl_publisher_t motor_current_pub;
 static sensor_msgs__msg__JointState joint_msg;
@@ -912,12 +909,319 @@ void SONAR_SystemInit(void)
 // ---------------------------------------------------------------------------------------------------------------
 // ---------------------------------------- Start Motors, Encoders & Odom Code -----------------------------------------
 // ---------------------------------------------------------------------------------------------------------------
+#define ENCODER_RESOULTION   			12.0f
+#define GEARBOX_RATIO 					64.0f
+#define ENCODER_QUADRATURE    			4.0f
+#define TICKS_PER_WHEEL_REV     		(ENCODER_RESOULTION * ENCODER_QUADRATURE * GEARBOX_RATIO)	// 3072
+#define RAD_PER_TICK         			(2.0f * 3.1416f / TICKS_PER_WHEEL_REV)
+#define DeltaT       		   			0.001f						// control time for motor/PID control  1 [ms]
+#define RAD_PER_TICK_PER_SEC  			RAD_PER_TICK / DeltaT
+
+typedef struct {
+    float Kc;               // Controller gain
+    float tau_i;            // Integral time constant (s)
+    float tau_d;            // Derivative time constant (s)
+
+    float cof_A;            // Discrete PID coefficients
+    float cof_B;
+    float cof_C;
+
+    float last_error;       // e(k-1)
+    float prev_error;       // e(k-2)
+    float prev_output;      // u(k-1)
+    float output;           // Current output
+
+    float output_max;		// Output limits
+    float output_min;
+} PID_t;
 
 float vx = 0;
 float vy = 0;
 float wz = 0;
 volatile float w_meas[4];
-float RAD_PER_TICK_PER_SEC  = 0.0f;
+//volatile uint32_t g_ccr_applied[4] = {0, 0, 0, 0};
+
+float vx_odom = 0;
+float vy_odom = 0;
+float wz_odom = 0;
+
+
+const uint32_t TIM_CHANNELS[4] = {
+	TIM_CHANNEL_1, // RL
+	TIM_CHANNEL_2, // FL
+	TIM_CHANNEL_3, // FR
+	TIM_CHANNEL_4  // RR
+};
+
+volatile uint32_t g_ccr_applied[4];
+
+PID_t pid_wheel[4];
+
+rcl_subscription_t twist_sub;     // Subscription object → listens to /twist_nexus topic
+geometry_msgs__msg__Twist twist_msg;  // Struct holding the received Twist message data
+
+#define DEBUG_ARRAY_SIZE  16
+
+rcl_publisher_t debug_publisher;
+std_msgs__msg__Float32MultiArray debug_msg;
+
+float data_buffer[DEBUG_ARRAY_SIZE];
+
+
+float clamp(float v, float lo, float hi);
+void setMotorDir(GPIO_TypeDef* INxA_Port, uint16_t INxA_Pin, GPIO_TypeDef* INxB_Port, uint16_t INxB_Pin, float speed);
+
+void init_motors(uint32_t CCR);
+void Mecanum_Control(float vx_target, float vy_target, float w_target);
+void Emergency_Stop(void);
+void stm32_debug_publish(void);
+
+
+void PID_Init(float Kp, float Ki, float Kd);
+void PID_WheelInit(PID_t *pid, float Kp, float Ki, float Kd, float dt);
+float PID_Update(PID_t *pid, float setpoint, float input);
+
+void odom_publish(void);
+
+
+float clamp(float v, float lo, float hi){
+    if (v < lo) 		return lo;
+    else if (v > hi) 	return hi;
+    else 				return v;
+}
+
+
+void setMotorDir(GPIO_TypeDef* INxA_Port, uint16_t INxA_Pin, GPIO_TypeDef* INxB_Port, uint16_t INxB_Pin, float speed) {
+
+	if (speed > 0.0001f) { // Forward
+		HAL_GPIO_WritePin(INxB_Port, INxB_Pin, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(INxA_Port, INxA_Pin, GPIO_PIN_SET);
+
+	} else if (speed < -0.0001f) { // Reverse
+		HAL_GPIO_WritePin(INxA_Port, INxA_Pin, GPIO_PIN_RESET);
+		HAL_GPIO_WritePin(INxB_Port, INxB_Pin, GPIO_PIN_SET);
+
+	} else { // Stop / Brake
+		//HAL_GPIO_WritePin(INxA_Port, INxA_Pin, GPIO_PIN_RESET);
+		//HAL_GPIO_WritePin(INxB_Port, INxB_Pin, GPIO_PIN_RESET);
+	}
+}
+
+void init_motors(uint32_t CCR){
+
+	//uint32_t CCR_clamped = (uint32_t)clamp((float)CCR, 0 , 300);
+	uint32_t CCR_clamped = CCR;
+
+	// Set the direction to Forward (INA = 1) & (INB = 0)
+	// Rear Left
+	HAL_GPIO_WritePin(RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin, GPIO_PIN_SET);
+	// Front Left
+	HAL_GPIO_WritePin(FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin, GPIO_PIN_SET);
+	// Rear Right
+	HAL_GPIO_WritePin(RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin, GPIO_PIN_SET);
+	// Front Right
+	HAL_GPIO_WritePin(FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, GPIO_PIN_RESET);
+	HAL_GPIO_WritePin(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin, GPIO_PIN_SET);
+
+	// Enable the full bridges of the motor drivers (VDD)
+	HAL_GPIO_WritePin(RL_VDD_GPO_GPIO_Port, RL_VDD_GPO_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(FR_VDD_GPO_GPIO_Port, FR_VDD_GPO_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(RR_VDD_GPO_GPIO_Port, RR_VDD_GPO_Pin, GPIO_PIN_SET);
+	HAL_GPIO_WritePin(FL_VDD_GPO_GPIO_Port, FL_VDD_GPO_Pin, GPIO_PIN_SET);
+
+	// Start the PWM signals
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);	// RL Motor
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);	// FL Motor
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3);	// FR Motor
+	HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4);	// RR Motor
+
+	// Set RL, FL, FR and RR motors to initial speed. For example 0 PWM = 0 CCR = 0% Duty Cycle => t_on = 0 µs
+	/*
+	for(uint32_t i = 0; i <= CCR_clamped; i++){
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, i+200UL);	// RL Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, i+100UL);	// FL Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, i);		// FR Motor
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, 0);		// RR Motor
+	  	HAL_Delay(15);
+	  }
+	*/
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_1, CCR_clamped);	// RL Motor
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, CCR_clamped);	// FL Motor
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_3, CCR_clamped);	// FR Motor
+	__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_4, CCR_clamped);	// RR Motor
+
+
+}
+
+
+void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
+{
+
+    float w_target[4];	    // Desired wheel angular velocities
+    w_target[0] = (+vx_twist + vy_twist - (A_SUM * wz_twist)) / WHEEL_R;  // RL
+    w_target[1] = (+vx_twist - vy_twist - (A_SUM * wz_twist)) / WHEEL_R;  // FL
+    w_target[2] = (+vx_twist + vy_twist + (A_SUM * wz_twist)) / WHEEL_R;  // FR
+    w_target[3] = (+vx_twist - vy_twist + (A_SUM * wz_twist)) / WHEEL_R;  // RR
+
+    float pid_output[4];
+
+    for (int i = 0; i < 4; i++) {
+        pid_output[i] = PID_Update(&pid_wheel[i], w_target[i], w_meas[i]);
+    }
+
+    // Motor directions
+    setMotorDir(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin,
+                RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, pid_output[0]);
+    setMotorDir(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin,
+                FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, pid_output[1]);
+    setMotorDir(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin,
+                FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, pid_output[2]);
+    setMotorDir(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin,
+                RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, pid_output[3]);
+
+    uint32_t CCR[4];					// Convert PID output to PWM
+    for (int i = 0; i < 4; i++) {
+        CCR[i] = (uint32_t)((fabsf(pid_output[i]) / MAX_WHEEL_ANGULAR_V_RADPS) * CCR_MAX);
+        CCR[i] = (uint32_t)clamp((float)CCR[i], 0.0f, CCR_MAX);
+    }
+
+    for (int i = 0; i < 4; i++) {
+        __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNELS[i], CCR[i]);
+        g_ccr_applied[i] = CCR[i];
+    }
+
+    stm32_debug_publish();
+}
+
+
+/*
+void Mecanum_Control(float vx_twist, float vy_twist, float wz_twist)
+{
+
+  //  static float vx_twist_ramped = 0, vy_twist_ramped = 0, wz_twist_ramped = 0;
+    vx_twist_ramped = ramp(vx_twist, vx_twist_ramped, g_v_step);
+  //  vy_twist_ramped = ramp(vy_twist, vy_twist_ramped, g_v_step);
+    wz_twist_ramped = ramp(wz_twist, wz_twist_ramped, g_wz_step_radps);
+
+
+    // Desired wheel angular velocities
+    float w_target[4];
+    w_target[0] = (+vx_twist_ramped + vy_twist_ramped - (A_SUM * wz_twist_ramped)) / WHEEL_R;  // RL
+ //   w_target[1] = (+vx_twist_ramped - vy_twist_ramped - (A_SUM * wz_twist_ramped)) / WHEEL_R;  // FL
+    w_target[2] = (+vx_twist_ramped + vy_twist_ramped + (A_SUM * wz_twist_ramped)) / WHEEL_R;  // FR
+    w_target[3] = (+vx_twist_ramped - vy_twist_ramped + (A_SUM * wz_twist_ramped)) / WHEEL_R;  // RR
+
+
+    float w_target[4];	    // Desired wheel angular velocities
+    w_target[0] = (+vx_twist + vy_twist - (A_SUM * wz_twist)) / WHEEL_R;  // RL
+    w_target[1] = (+vx_twist - vy_twist - (A_SUM * wz_twist)) / WHEEL_R;  // FL
+ //   w_target[2] = (+vx_twist + vy_twist + (A_SUM * wz_twist)) / WHEEL_R;  // FR
+    w_target[3] = (+vx_twist - vy_twist + (A_SUM * wz_twist)) / WHEEL_R;  // RR
+
+    // Motor directions
+
+ //   setMotorDir(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin,
+                RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, w_target[0]);
+    //setMotorDir(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin,
+                FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, w_target[1]);
+    setMotorDir(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin,
+                FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, w_target[2]);
+    setMotorDir(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin,
+   //             RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, w_target[3]);
+
+
+    setMotorDir(RL_INA_GPO_GPIO_Port, RL_INA_GPO_Pin,
+                RL_INB_GPO_GPIO_Port, RL_INB_GPO_Pin, vx_twist);
+    setMotorDir(FL_INA_GPO_GPIO_Port, FL_INA_GPO_Pin,
+                FL_INB_GPO_GPIO_Port, FL_INB_GPO_Pin, vx_twist);
+    setMotorDir(FR_INA_GPO_GPIO_Port, FR_INA_GPO_Pin,
+                FR_INB_GPO_GPIO_Port, FR_INB_GPO_Pin, vx_twist);
+    setMotorDir(RR_INA_GPO_GPIO_Port, RR_INA_GPO_Pin,
+                RR_INB_GPO_GPIO_Port, RR_INB_GPO_Pin, vx_twist);
+
+    // Convert PID output to PWM
+    uint32_t CCR[4];
+    for (int i = 0; i < 4; i++) {
+        CCR[i] = (uint32_t)((fabsf(w_target[i]) / MAX_WHEEL_ANGULAR_V_RADPS) * CCR_MAX);
+        CCR[i] = (uint32_t)clamp((float)CCR[i], 0.0f, CCR_MAX);
+    }
+
+    // Apply PWM
+	for (int i = 0; i < 4; i++) {
+		//__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNELS[i], CCR[i]);
+		//g_ccr_applied[i] = CCR[i];
+
+		__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNELS[i], (uint32_t)(fabsf(vx_twist)));
+		//__HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNELS[i], 250);
+		g_ccr_applied[i] = (uint32_t)((vx_twist));
+	}
+
+    stm32_debug_publish();
+}
+
+*/
+
+
+void PID_Init(float Kc, float taui, float taud)
+{
+    if (Kc == 0.0f)   Kc   = KC;
+    if (taui == 0.0f) taui = TAUI;
+    if (taud == 0.0f) taud = TAUD;
+
+    PID_WheelInit(&pid_wheel[0], Kc, taui, taud, DeltaT);   // RL
+    PID_WheelInit(&pid_wheel[1], Kc, taui, taud, DeltaT);   // FL
+    PID_WheelInit(&pid_wheel[2], Kc, taui, taud, DeltaT);   // FR
+    PID_WheelInit(&pid_wheel[3], Kc, taui, taud, DeltaT);   // RR
+
+}
+
+void PID_WheelInit(PID_t *pid, float Kc, float tau_i, float tau_d, float dt)
+{
+    pid->Kc = Kc;
+    pid->tau_i = tau_i;
+    pid->tau_d = tau_d;
+
+    // Precompute coefficients (Tustin/bilinear transform)
+    pid->cof_A =  Kc * (1.0f + (dt / (2.0f * tau_i)) + (tau_d / dt));
+    pid->cof_B = -Kc * (1.0f - (dt / (2.0f * tau_i)) + (2.0f * tau_d / dt));
+    pid->cof_C = Kc * (tau_d / dt);
+
+    // Initialize state
+    pid->last_error = 0.0f;
+    pid->prev_error = 0.0f;
+    pid->prev_output = 0.0f;
+    pid->output = 0.0f;
+
+    // Default limits (can be overridden)
+    pid->output_max =  MAX_WHEEL_ANGULAR_V_RADPS;
+    pid->output_min =  MIN_WHEEL_ANGULAR_V_RADPS;
+}
+
+float PID_Update(PID_t *pid, float setpoint, float input)
+{
+    float error = setpoint - input;
+
+    float output = pid->prev_output
+                 + pid->cof_A * error
+                 + pid->cof_B * pid->last_error
+                 + pid->cof_C * pid->prev_error;
+
+    // Clamp to limits
+    if (output > pid->output_max) output = pid->output_max;
+    else if (output < pid->output_min) output = pid->output_min;
+
+    // Shift states
+    pid->prev_error = pid->last_error;
+    pid->last_error = error;
+    pid->prev_output = output;
+    pid->output = output;
+
+    return output;
+}
+
 
 void twist_callback(const void * msgin)
 {
@@ -930,7 +1234,6 @@ void twist_callback(const void * msgin)
     vy = (float)msg->linear.y;   // lateral [m/s]
     wz = (float)msg->angular.z;  // rotation [rad/s]
 
-	Mecanum_Control(vx, vy, wz);
 
     // Pass values to the motion controller
     //if ((osKernelGetTickCount() - last_cmd_tick) > CMD_TIMEOUT_MS) {
@@ -944,12 +1247,36 @@ volatile uint32_t pastCount[4] 	 = {0};		// {RL, FL, FR, RR}
 
 volatile bool encUpdateFlag 	 = 0;
 
+volatile float x_odom = 0.0f;
+volatile float y_odom = 0.0f;
+volatile float th_odom = 0.0f;
 
-void odom_timer_cb(rcl_timer_t * timer, int64_t last_call_time)
+void odom_publish(void)
 {
-    compute_and_publish_odometry();   // Run the actual odometry computation (user code)
-}
+  int64_t t_ns = rmw_uros_epoch_nanos();
+  if (t_ns > 0) {
+	odom_msg.header.stamp.sec     = (int32_t)(t_ns / 1000000000LL);
+	odom_msg.header.stamp.nanosec = (uint32_t)(t_ns % 1000000000LL);
+  } else {
+	TickType_t tk = xTaskGetTickCount();
+	odom_msg.header.stamp.sec     = (int32_t)(tk / configTICK_RATE_HZ);
+	odom_msg.header.stamp.nanosec = (uint32_t)((tk % configTICK_RATE_HZ) * (1000000000UL / configTICK_RATE_HZ));
+  }
 
+  odom_msg.pose.pose.position.x = (double)x_odom;
+  odom_msg.pose.pose.position.y = (double)y_odom;
+
+  float half = 0.5f * th_odom;
+
+  odom_msg.pose.pose.orientation.z = (double)sinf(half);
+  odom_msg.pose.pose.orientation.w = (double)cosf(half);
+
+  odom_msg.twist.twist.linear.x  = (double)vx_odom;
+  odom_msg.twist.twist.linear.y  = (double)vy_odom;
+  odom_msg.twist.twist.angular.z = (double)wz_odom;
+
+  CHECK_RCL(rcl_publish(&odom_pub, &odom_msg, NULL));
+}
 
 // ---------------------------------------------------------------------------------------------------------------
 // ---------------------------------------- End Motors, Encoders & Odom Code -----------------------------------------
@@ -980,14 +1307,6 @@ void MicroROS_AllocatorInit(void)
     CHECK_RCL(rcutils_set_default_allocator(&freeRTOS_allocator));
 }
 
-void MicroROS_PingAgent(uint32_t attempts, uint32_t period_ms)
-{
-    for (uint32_t i = 0; i < attempts; ++i) {
-        if (rmw_uros_ping_agent(100, 1) == RMW_RET_OK) break;
-        osDelay(period_ms);
-    }
-}
-
 void MicroROS_CoreInit(void)
 {
     allocator = rcl_get_default_allocator();
@@ -1006,6 +1325,35 @@ void MicroROS_TopicsInit(void)
 		  ROSIDL_GET_MSG_TYPE_SUPPORT(geometry_msgs, msg, Twist),		// param3 => message type support	&& ROSIDL_GET_MSG_TYPE_SUPPORT(PkgName, MsgSubfolder, MsgName)
 		  "/twist_nexus"));												// param4 => topic_name
 
+	// -----------------------------------------------------------------------------------
+
+	CHECK_RCL(rclc_publisher_init_default(
+		&debug_publisher,
+		&node_base_controller,
+		ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Float32MultiArray),
+		"/stm32_debug" ));
+
+
+	std_msgs__msg__MultiArrayDimension__Sequence__init(&debug_msg.layout.dim, 1);
+	rosidl_runtime_c__String__assign(&debug_msg.layout.dim.data[0].label, "Debug of STM32 Values");
+
+	debug_msg.layout.dim.data[0].size   = DEBUG_ARRAY_SIZE;
+	debug_msg.layout.dim.data[0].stride = DEBUG_ARRAY_SIZE;
+	debug_msg.layout.data_offset        = 0;
+
+	// 3. Allocate the data buffer
+	debug_msg.data.data     = data_buffer;
+	debug_msg.data.size     = DEBUG_ARRAY_SIZE;
+	debug_msg.data.capacity = DEBUG_ARRAY_SIZE;
+
+	// 4. Initialize values to zero
+	for (uint8_t i = 0; i < DEBUG_ARRAY_SIZE; i++)  debug_msg.data.data[i] = 0.0f;
+
+
+
+   // -----------------------------------------------------------------------------------
+
+
 	CHECK_RCL(rclc_publisher_init_default(
 		  &odom_pub,												// param1 => publisher
 		  &node_base_controller,									// param2 => node
@@ -1021,10 +1369,26 @@ void MicroROS_TopicsInit(void)
 	odom_msg.header.stamp.sec = 0;
 	odom_msg.header.stamp.nanosec = 0;
 
-	debug_init(&node_base_controller);
+	odom_msg.twist.twist.linear.z  = 0.0f;
+
+	odom_msg.twist.twist.angular.x = 0.0f;
+	odom_msg.twist.twist.angular.y = 0.0f;
+
+	for (int i = 0; i < 36; i++) {
+		odom_msg.pose.covariance[i]  = 0.0;
+		odom_msg.twist.covariance[i] = 0.0;
+	}
+
+	odom_msg.pose.covariance[0]  = 0;   // x
+	odom_msg.pose.covariance[7]  = 0;   // y
+	odom_msg.pose.covariance[35] = 0;   // yaw
+	odom_msg.twist.covariance[0] = 0;   // vx
+	odom_msg.twist.covariance[7] = 0;   // vy
+	odom_msg.twist.covariance[35]= 0;   // wz
 
 	// -----------------------------------------------------------------------------------
-    // IMU publishers
+	// IMU publishers
+/*
 	CHECK_RCL(rclc_publisher_init_default(
 			&imu_pub,
 			&node_base_controller,
@@ -1053,8 +1417,9 @@ void MicroROS_TopicsInit(void)
 	}
 	imu_msg.orientation_covariance[0] = -1.0; // unknown orientation
 
-
+*/
 	// -----------------------------------------------------------------------------------
+
 /*
 	// SONAR publishers
 	static const char * SONAR_INDEX_LABELS = "order: front,right,back,left";
@@ -1096,8 +1461,8 @@ void MicroROS_TopicsInit(void)
 	sonar_temp_msg.data.size     = NUM_SENSORS;
 	sonar_temp_msg.data.data     = (float*)malloc(NUM_SENSORS * sizeof(float));
 	for (uint8_t i = 0; i < NUM_SENSORS; i++) sonar_temp_msg.data.data[i] = 0.0f;
-*/
 
+*/
 	// -----------------------------------------------------------------------------------
 
 }
@@ -1107,16 +1472,16 @@ void MicroROS_ExecutorInit(uint32_t executor_capacity)
     rclc_executor_init(&executor, &support.context, executor_capacity, &allocator);
 
     // Here, we set up odometry @ 100 Hz.
+    /*
 	  rclc_timer_init_default2(
 		  &timer_odom,				// create timer = timer_odom
 		  &support,					// Ensures entities share the same ROS context, clock, and memory and Holds micro-ROS runtime context and allocator
 		  RCL_MS_TO_NS(10),			// callback period = 10 ms
 		  odom_timer_cb,			// callback function
 		  true);	 				// autostart = true
+     */
 
-	  rclc_executor_add_timer(&executor, &timer_odom);
-
-	rclc_executor_add_subscription(&executor, &twist_sub, &twist_msg, &twist_callback, ON_NEW_DATA);
+	rclc_executor_add_subscription(&executor, &twist_sub, &twist_msg, &twist_callback, ALWAYS);
 
     // Slow sonar update rate: 250 ms
 	  /*
@@ -1156,8 +1521,7 @@ void nexus_bringup(void){
 	//SONAR_SystemInit();
 
 	init_motors(0);
-	RAD_PER_TICK_PER_SEC = RAD_PER_TICK / DeltaT;
-	PID_Init(0.035f, 0.02f, 0);
+
 }
 
 
@@ -1443,11 +1807,11 @@ static void MX_TIM1_Init(void)
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
+  sConfig.IC1Filter = 15;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 0;
+  sConfig.IC2Filter = 15;
   if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -1563,11 +1927,11 @@ static void MX_TIM3_Init(void)
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
+  sConfig.IC1Filter = 15;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 0;
+  sConfig.IC2Filter = 15;
   if (HAL_TIM_Encoder_Init(&htim3, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -1612,11 +1976,11 @@ static void MX_TIM4_Init(void)
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
+  sConfig.IC1Filter = 15;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 0;
+  sConfig.IC2Filter = 15;
   if (HAL_TIM_Encoder_Init(&htim4, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -1700,11 +2064,11 @@ static void MX_TIM8_Init(void)
   sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC1Filter = 0;
+  sConfig.IC1Filter = 15;
   sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
   sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
   sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
-  sConfig.IC2Filter = 0;
+  sConfig.IC2Filter = 15;
   if (HAL_TIM_Encoder_Init(&htim8, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -1878,7 +2242,33 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+// Call this periodically from your publishing task
+void stm32_debug_publish(void)
+{
 
+	data_buffer[0] = (float)currCount[0];		// RL
+	data_buffer[1] = (float)currCount[1];		// FL
+	data_buffer[2] = (float)currCount[2];		// FR
+	data_buffer[3] = (float)currCount[3];		// RR
+
+	data_buffer[4] = (float)deltaEncoder[0];
+	data_buffer[5] = (float)deltaEncoder[1];
+	data_buffer[6] = (float)deltaEncoder[2];
+	data_buffer[7] = (float)deltaEncoder[3];
+
+	data_buffer[8]  = w_meas[0];
+	data_buffer[9]  = w_meas[1];
+	data_buffer[10] = w_meas[2];
+	data_buffer[11] = w_meas[3];
+
+	data_buffer[12] = (float)g_ccr_applied[0];
+	data_buffer[13] = (float)g_ccr_applied[1];
+	data_buffer[14] = (float)g_ccr_applied[2];
+	data_buffer[15] = (float)g_ccr_applied[3];
+
+    CHECK_RCL(rcl_publish(&debug_publisher, &debug_msg, NULL));
+
+}
 /* USER CODE END 4 */
 
 /* USER CODE BEGIN Header_StartMicroROSTask */
@@ -1892,36 +2282,38 @@ void StartMicroROSTask(void *argument)
 {
   /* USER CODE BEGIN 5 */
 
-	TickType_t last = xTaskGetTickCount();
-	const TickType_t step = pdMS_TO_TICKS(5);   // ~200 Hz check
+	//TickType_t last = xTaskGetTickCount();
+	//const TickType_t step = pdMS_TO_TICKS(5);   // ~200 Hz check
 
 	  nexus_bringup();
 
 	  // micro-ROS  init
 	  MicroROS_TransportInit(&huart2);
 	  MicroROS_AllocatorInit();
-	  MicroROS_PingAgent(50, 100);
-	  MicroROS_CoreInit();   			// name and namespace
+	  while (rmw_uros_ping_agent(100, 1) != RMW_RET_OK) osDelay(100);
+	  MicroROS_CoreInit();
 	  MicroROS_TopicsInit();
-	  MicroROS_ExecutorInit(5);         // capacity = timers + subs you will add
+	  MicroROS_ExecutorInit(5);
 	  rmw_uros_sync_session(1000);
 
 	  // Initialize IMU + calibration
-	  mpu6050_init(&imu);
-	  mpu6050_read_dma(&imu);
-	  imu_calibrate(&imu, 800);
+	  //mpu6050_init(&imu);
+	  //mpu6050_read_dma(&imu);
+	  //imu_calibrate(&imu, 800);
 
-
+	  PID_Init(0.055f, 0.04f, 0);
   /* Infinite loop */
   for(;;)
   {
 	  rclc_executor_spin_some(&executor, RCL_MS_TO_NS(5));
 
-	  if (i2c1_need_reset){  i2c1_reset(); }
+	  Mecanum_Control(vx, vy, wz);
+	  odom_publish();
+	  //if (i2c1_need_reset){  i2c1_reset(); }
 
-	  imu_func();
+	  //imu_func();
 
-	  vTaskDelayUntil(&last, step);
+	  //vTaskDelayUntil(&last, step);
 
   }
   /* USER CODE END 5 */
@@ -1939,10 +2331,10 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
   /* USER CODE BEGIN Callback 0 */
 	if (htim->Instance == TIM6) {
-		currCount[0] = __HAL_TIM_GET_COUNTER(&htim4);
-		currCount[1] = __HAL_TIM_GET_COUNTER(&htim1);
-		currCount[2] = __HAL_TIM_GET_COUNTER(&htim3);
-		currCount[3] = __HAL_TIM_GET_COUNTER(&htim8);
+		currCount[0] = __HAL_TIM_GET_COUNTER(&htim4);		// RL
+		currCount[1] = __HAL_TIM_GET_COUNTER(&htim1);		// FL
+		currCount[2] = __HAL_TIM_GET_COUNTER(&htim3);		// FR
+		currCount[3] = __HAL_TIM_GET_COUNTER(&htim8);		// RR
 
 		for (int i=0; i<4; i++) {
 
@@ -1951,10 +2343,26 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		  if (deltaEncoder[i] > 32767)        deltaEncoder[i] -= (int16_t) 65536;
 		  else if (deltaEncoder[i] < -32768)  deltaEncoder[i] += (int16_t) 65536;
 
-		  w_meas[i] = (float)deltaEncoder[i] * RAD_PER_TICK_PER_SEC;
+		  w_meas[i] = (((float)deltaEncoder[i] * RAD_PER_TICK) / DeltaT);
 		  pastCount[i] = currCount[i];
 	  }
-		encUpdateFlag = 1;
+	    vx_odom = (WHEEL_R / 4.0f)          * (w_meas[0] + w_meas[1] + w_meas[2] + w_meas[3]);
+	    vy_odom = (WHEEL_R / 4.0f)          * (w_meas[0] - w_meas[1] + w_meas[2] - w_meas[3]);
+	    wz_odom = (WHEEL_R / (4.0f*A_SUM))  * (-w_meas[0] - w_meas[1] + w_meas[2] + w_meas[3]);
+
+	      const float dt = DeltaT;   // 1 ms if TIM6 = 1 kHz
+	      float c = cosf(th_odom);
+	      float s = sinf(th_odom);
+	      x_odom += (vx_odom * c - vy_odom * s) * dt;
+	      y_odom += (vx_odom * s + vy_odom * c) * dt;
+	      th_odom += wz_odom * dt;
+
+	      if (th_odom > (float)M_PI)        th_odom -= 2.0f * (float)M_PI;
+	      else if (th_odom < -(float)M_PI)  th_odom += 2.0f * (float)M_PI;
+
+
+		//encUpdateFlag = 1;
+
 	}
   /* USER CODE END Callback 0 */
   if (htim->Instance == TIM7)
